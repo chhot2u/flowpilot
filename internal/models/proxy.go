@@ -1,0 +1,55 @@
+package models
+
+import "time"
+
+// ProxyStatus indicates the health of a proxy.
+type ProxyStatus string
+
+const (
+	ProxyStatusHealthy   ProxyStatus = "healthy"
+	ProxyStatusUnhealthy ProxyStatus = "unhealthy"
+	ProxyStatusUnknown   ProxyStatus = "unknown"
+)
+
+// ProxyProtocol is the supported proxy type.
+type ProxyProtocol string
+
+const (
+	ProxyHTTP   ProxyProtocol = "http"
+	ProxyHTTPS  ProxyProtocol = "https"
+	ProxySOCKS5 ProxyProtocol = "socks5"
+)
+
+// Proxy represents a proxy server in the pool.
+type Proxy struct {
+	ID          string        `json:"id"`
+	Server      string        `json:"server"` // host:port
+	Protocol    ProxyProtocol `json:"protocol"`
+	Username    string        `json:"username,omitempty"`
+	Password    string        `json:"password,omitempty"`
+	Geo         string        `json:"geo,omitempty"` // country code
+	Status      ProxyStatus   `json:"status"`
+	Latency     int           `json:"latency"` // ms, last measured
+	SuccessRate float64       `json:"successRate"`
+	TotalUsed   int           `json:"totalUsed"`
+	LastChecked *time.Time    `json:"lastChecked,omitempty"`
+	CreatedAt   time.Time     `json:"createdAt"`
+}
+
+// RotationStrategy controls how proxies are selected.
+type RotationStrategy string
+
+const (
+	RotationRoundRobin    RotationStrategy = "round_robin"
+	RotationRandom        RotationStrategy = "random"
+	RotationLeastUsed     RotationStrategy = "least_used"
+	RotationLowestLatency RotationStrategy = "lowest_latency"
+)
+
+// ProxyPoolConfig configures the proxy pool behavior.
+type ProxyPoolConfig struct {
+	Strategy            RotationStrategy `json:"strategy"`
+	HealthCheckInterval int              `json:"healthCheckInterval"` // seconds
+	MaxFailures         int              `json:"maxFailures"`
+	HealthCheckURL      string           `json:"healthCheckUrl"`
+}

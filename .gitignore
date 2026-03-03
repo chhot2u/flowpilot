@@ -1,0 +1,9 @@
+build/bin
+node_modules
+frontend/dist
+*.db
+*.exe
+*.log
+/root/tmp/
+.env
+.env.*
