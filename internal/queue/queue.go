@@ -49,6 +49,8 @@ func New(db *database.DB, runner *browser.Runner, maxConcurrency int, onEvent Ev
 
 // SetProxyManager attaches a proxy manager for pool-based proxy selection.
 func (q *Queue) SetProxyManager(pm *proxy.Manager) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.proxyManager = pm
 }
 
@@ -141,8 +143,10 @@ func (q *Queue) executeTask(ctx context.Context, task models.Task) {
 		q.mu.Unlock()
 	}()
 
+	var selectedProxyID string
 	if task.Proxy.Server == "" && q.proxyManager != nil {
 		if p, err := q.proxyManager.SelectProxy(task.Proxy.Geo); err == nil {
+			selectedProxyID = p.ID
 			task.Proxy = p.ToProxyConfig()
 		}
 	}
@@ -155,12 +159,12 @@ func (q *Queue) executeTask(ctx context.Context, task models.Task) {
 
 	result, err := q.runner.RunTask(taskCtx, task)
 
-	if task.Proxy.Server != "" && q.proxyManager != nil {
-		_ = q.proxyManager.RecordUsage(task.ID, err == nil)
+	if selectedProxyID != "" && q.proxyManager != nil {
+		_ = q.proxyManager.RecordUsage(selectedProxyID, err == nil)
 	}
 
 	if err != nil {
-		q.handleFailure(ctx, taskCtx, task, err)
+		q.handleFailure(ctx, task, err)
 		return
 	}
 
@@ -168,7 +172,7 @@ func (q *Queue) executeTask(ctx context.Context, task models.Task) {
 }
 
 // handleFailure processes a task execution error, retrying if allowed.
-func (q *Queue) handleFailure(parentCtx, taskCtx context.Context, task models.Task, execErr error) {
+func (q *Queue) handleFailure(parentCtx context.Context, task models.Task, execErr error) {
 	if task.RetryCount < task.MaxRetries {
 		if err := q.db.IncrementRetry(task.ID); err != nil {
 			q.emitEvent(task.ID, models.TaskStatusFailed, fmt.Sprintf("increment retry: %v", err))
@@ -182,10 +186,9 @@ func (q *Queue) handleFailure(parentCtx, taskCtx context.Context, task models.Ta
 		}
 		backoff := time.Duration(backoffSec) * time.Second
 
-		// Wait for backoff respecting context cancellation.
 		select {
 		case <-time.After(backoff):
-		case <-taskCtx.Done():
+		case <-parentCtx.Done():
 			if err := q.db.UpdateTaskStatus(task.ID, models.TaskStatusCancelled, "cancelled during retry backoff"); err != nil {
 				q.emitEvent(task.ID, models.TaskStatusFailed, fmt.Sprintf("update status: %v", err))
 			}

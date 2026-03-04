@@ -101,6 +101,15 @@ type TaskEvent struct {
 	Log    *LogEntry  `json:"log,omitempty"`
 }
 
+// BatchTaskInput holds the input fields for creating a single task in a batch.
+type BatchTaskInput struct {
+	Name     string      `json:"name"`
+	URL      string      `json:"url"`
+	Steps    []TaskStep  `json:"steps"`
+	Proxy    ProxyConfig `json:"proxy"`
+	Priority int         `json:"priority"`
+}
+
 // BatchConfig is used to create multiple tasks at once.
 type BatchConfig struct {
 	Tasks       []Task `json:"tasks"`

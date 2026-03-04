@@ -187,13 +187,7 @@ func (a *App) UpdateTask(id, name, url string, steps []models.TaskStep, proxyCon
 }
 
 // CreateBatch creates multiple tasks at once. Validates all before creating any.
-func (a *App) CreateBatch(inputs []struct {
-	Name     string             `json:"name"`
-	URL      string             `json:"url"`
-	Steps    []models.TaskStep  `json:"steps"`
-	Proxy    models.ProxyConfig `json:"proxy"`
-	Priority int                `json:"priority"`
-}, autoStart bool) ([]models.Task, error) {
+func (a *App) CreateBatch(inputs []models.BatchTaskInput, autoStart bool) ([]models.Task, error) {
 	for i, input := range inputs {
 		if err := validation.ValidateTask(input.Name, input.URL, input.Steps, models.TaskPriority(input.Priority), false); err != nil {
 			return nil, fmt.Errorf("task %d: %w", i, err)
@@ -243,6 +237,9 @@ func (a *App) GetTaskStats() (map[string]int, error) {
 
 // GetRunningCount returns how many tasks are currently running.
 func (a *App) GetRunningCount() int {
+	if a.queue == nil {
+		return 0
+	}
 	return a.queue.RunningCount()
 }
 

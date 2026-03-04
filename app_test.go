@@ -530,13 +530,7 @@ func TestAppUpdateTask(t *testing.T) {
 func TestAppCreateBatch(t *testing.T) {
 	app := setupTestApp(t)
 
-	inputs := []struct {
-		Name     string             `json:"name"`
-		URL      string             `json:"url"`
-		Steps    []models.TaskStep  `json:"steps"`
-		Proxy    models.ProxyConfig `json:"proxy"`
-		Priority int                `json:"priority"`
-	}{
+	inputs := []models.BatchTaskInput{
 		{Name: "Batch 1", URL: "https://a.com", Steps: validSteps(), Priority: 5},
 		{Name: "Batch 2", URL: "https://b.com", Steps: validSteps(), Priority: 1},
 		{Name: "Batch 3", URL: "https://c.com", Steps: validSteps(), Priority: 10},
@@ -559,13 +553,7 @@ func TestAppCreateBatch(t *testing.T) {
 func TestAppCreateBatchRejectsOnInvalid(t *testing.T) {
 	app := setupTestApp(t)
 
-	inputs := []struct {
-		Name     string             `json:"name"`
-		URL      string             `json:"url"`
-		Steps    []models.TaskStep  `json:"steps"`
-		Proxy    models.ProxyConfig `json:"proxy"`
-		Priority int                `json:"priority"`
-	}{
+	inputs := []models.BatchTaskInput{
 		{Name: "Good", URL: "https://a.com", Steps: validSteps(), Priority: 5},
 		{Name: "", URL: "https://b.com", Steps: validSteps(), Priority: 5},
 	}

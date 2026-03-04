@@ -142,6 +142,10 @@ func (r *Runner) setupProxyAuth(ctx context.Context, proxyConfig models.ProxyCon
 			}()
 		}
 	})
+
+	if err := chromedp.Run(ctx, fetch.Enable().WithHandleAuthRequests(true)); err != nil {
+		_ = err
+	}
 }
 
 // executeStep dispatches to the appropriate action handler.
