@@ -668,7 +668,7 @@ func TestUpdateTask(t *testing.T) {
 	}
 	newProxy := models.ProxyConfig{Server: "new.proxy:9090", Username: "u2", Password: "p2"}
 
-	if err := db.UpdateTask("upd-1", "Updated", "https://updated.com", newSteps, newProxy, models.PriorityHigh); err != nil {
+	if err := db.UpdateTask("upd-1", "Updated", "https://updated.com", newSteps, newProxy, models.PriorityHigh, []string{"updated-tag"}); err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
 
@@ -719,7 +719,7 @@ func TestUpdateTaskRejectsRunning(t *testing.T) {
 		t.Fatalf("UpdateTaskStatus: %v", err)
 	}
 
-	err := db.UpdateTask("upd-run-1", "New Name", "https://x.com", nil, models.ProxyConfig{}, models.PriorityNormal)
+	err := db.UpdateTask("upd-run-1", "New Name", "https://x.com", nil, models.ProxyConfig{}, models.PriorityNormal, nil)
 	if err == nil {
 		t.Fatal("expected error when updating running task")
 	}

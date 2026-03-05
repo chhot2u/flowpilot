@@ -52,6 +52,7 @@ func (db *DB) migrate() error {
 		proxy_username TEXT DEFAULT '',
 		proxy_password TEXT DEFAULT '',
 		proxy_geo TEXT DEFAULT '',
+		proxy_protocol TEXT DEFAULT '',
 		priority INTEGER DEFAULT 5,
 		status TEXT DEFAULT 'pending',
 		retry_count INTEGER DEFAULT 0,
@@ -88,6 +89,10 @@ func (db *DB) migrate() error {
 	if err != nil {
 		return fmt.Errorf("exec schema: %w", err)
 	}
+
+	// Add proxy_protocol column for existing databases (idempotent).
+	_, _ = db.conn.Exec(`ALTER TABLE tasks ADD COLUMN proxy_protocol TEXT DEFAULT ''`)
+
 	return nil
 }
 
@@ -114,10 +119,10 @@ func (db *DB) CreateTask(task models.Task) error {
 	}
 
 	_, err = db.conn.Exec(`
-		INSERT INTO tasks (id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, priority, status, max_retries, tags, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO tasks (id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, status, max_retries, tags, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Name, task.URL, string(stepsJSON),
-		task.Proxy.Server, encUsername, encPassword, task.Proxy.Geo,
+		task.Proxy.Server, encUsername, encPassword, task.Proxy.Geo, task.Proxy.Protocol,
 		task.Priority, task.Status, task.MaxRetries, string(tagsJSON), task.CreatedAt,
 	)
 	if err != nil {
@@ -128,7 +133,7 @@ func (db *DB) CreateTask(task models.Task) error {
 
 // GetTask retrieves a task by ID.
 func (db *DB) GetTask(id string) (*models.Task, error) {
-	row := db.conn.QueryRow(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo,
+	row := db.conn.QueryRow(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE id = ?`, id)
 	task, err := db.scanTask(row)
@@ -140,7 +145,7 @@ func (db *DB) GetTask(id string) (*models.Task, error) {
 
 // ListTasks returns all tasks, ordered by priority desc, created_at desc.
 func (db *DB) ListTasks() ([]models.Task, error) {
-	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo,
+	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
@@ -164,7 +169,7 @@ func (db *DB) ListTasks() ([]models.Task, error) {
 
 // ListTasksByStatus returns tasks with a given status.
 func (db *DB) ListTasksByStatus(status models.TaskStatus) ([]models.Task, error) {
-	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo,
+	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`, status)
 	if err != nil {
@@ -218,28 +223,46 @@ func (db *DB) UpdateTaskResult(id string, result models.TaskResult) error {
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
-	_, err = db.conn.Exec(`UPDATE tasks SET result = ? WHERE id = ?`, string(resultJSON), id)
+	res, err := db.conn.Exec(`UPDATE tasks SET result = ? WHERE id = ?`, string(resultJSON), id)
 	if err != nil {
 		return fmt.Errorf("update task %s result: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check update result for task %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
 	}
 	return nil
 }
 
 // IncrementRetry increases retry_count for a task.
 func (db *DB) IncrementRetry(id string) error {
-	_, err := db.conn.Exec(`UPDATE tasks SET retry_count = retry_count + 1, status = 'retrying' WHERE id = ?`, id)
+	res, err := db.conn.Exec(`UPDATE tasks SET retry_count = retry_count + 1, status = 'retrying' WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("increment retry for task %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check retry result for task %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s not found", id)
 	}
 	return nil
 }
 
 // UpdateTask updates editable fields of a task. Only allowed for pending/failed tasks.
 // Uses an atomic UPDATE with a status guard to prevent TOCTOU races.
-func (db *DB) UpdateTask(id, name, url string, steps []models.TaskStep, proxyConfig models.ProxyConfig, priority models.TaskPriority) error {
+func (db *DB) UpdateTask(id, name, url string, steps []models.TaskStep, proxyConfig models.ProxyConfig, priority models.TaskPriority, tags []string) error {
 	stepsJSON, err := json.Marshal(steps)
 	if err != nil {
 		return fmt.Errorf("marshal steps: %w", err)
+	}
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return fmt.Errorf("marshal tags: %w", err)
 	}
 
 	encUsername, err := crypto.Encrypt(proxyConfig.Username)
@@ -251,8 +274,8 @@ func (db *DB) UpdateTask(id, name, url string, steps []models.TaskStep, proxyCon
 		return fmt.Errorf("encrypt proxy password: %w", err)
 	}
 
-	res, err := db.conn.Exec(`UPDATE tasks SET name = ?, url = ?, steps = ?, proxy_server = ?, proxy_username = ?, proxy_password = ?, proxy_geo = ?, priority = ? WHERE id = ? AND status IN (?, ?)`,
-		name, url, string(stepsJSON), proxyConfig.Server, encUsername, encPassword, proxyConfig.Geo, priority, id,
+	res, err := db.conn.Exec(`UPDATE tasks SET name = ?, url = ?, steps = ?, proxy_server = ?, proxy_username = ?, proxy_password = ?, proxy_geo = ?, proxy_protocol = ?, priority = ?, tags = ? WHERE id = ? AND status IN (?, ?)`,
+		name, url, string(stepsJSON), proxyConfig.Server, encUsername, encPassword, proxyConfig.Geo, proxyConfig.Protocol, priority, string(tagsJSON), id,
 		models.TaskStatusPending, models.TaskStatusFailed)
 	if err != nil {
 		return fmt.Errorf("update task %s: %w", id, err)
@@ -362,10 +385,17 @@ func (db *DB) ListHealthyProxies() ([]models.Proxy, error) {
 // UpdateProxyHealth updates proxy health check data.
 func (db *DB) UpdateProxyHealth(id string, status models.ProxyStatus, latency int) error {
 	now := time.Now()
-	_, err := db.conn.Exec(`UPDATE proxies SET status = ?, latency = ?, last_checked = ? WHERE id = ?`,
+	res, err := db.conn.Exec(`UPDATE proxies SET status = ?, latency = ?, last_checked = ? WHERE id = ?`,
 		status, latency, now, id)
 	if err != nil {
 		return fmt.Errorf("update proxy %s health: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check health update for proxy %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("proxy %s not found", id)
 	}
 	return nil
 }
@@ -415,7 +445,7 @@ func (db *DB) scanTask(row scanner) (*models.Task, error) {
 
 	err := row.Scan(
 		&t.ID, &t.Name, &t.URL, &stepsJSON,
-		&t.Proxy.Server, &t.Proxy.Username, &t.Proxy.Password, &t.Proxy.Geo,
+		&t.Proxy.Server, &t.Proxy.Username, &t.Proxy.Password, &t.Proxy.Geo, &t.Proxy.Protocol,
 		&t.Priority, &t.Status, &t.RetryCount, &t.MaxRetries, &t.Error,
 		&resultJSON, &tagsJSON, &t.CreatedAt, &startedAt, &completedAt,
 	)

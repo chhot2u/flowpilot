@@ -28,7 +28,7 @@ type Runner struct {
 
 // NewRunner creates a new browser runner. Eval steps are blocked by default.
 func NewRunner(screenshotDir string) (*Runner, error) {
-	if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
+	if err := os.MkdirAll(screenshotDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create screenshot dir: %w", err)
 	}
 	r := &Runner{screenshotDir: screenshotDir}
@@ -214,8 +214,10 @@ func (r *Runner) execWait(ctx context.Context, step models.TaskStep) error {
 		dur = 1 * time.Second
 	}
 	// Respect context cancellation during wait.
+	timer := time.NewTimer(dur)
+	defer timer.Stop()
 	select {
-	case <-time.After(dur):
+	case <-timer.C:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

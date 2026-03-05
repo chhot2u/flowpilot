@@ -510,7 +510,7 @@ func TestAppUpdateTask(t *testing.T) {
 		{Action: models.ActionNavigate, Value: "https://updated.com"},
 		{Action: models.ActionClick, Selector: "#new"},
 	}
-	err = app.UpdateTask(task.ID, "Updated", "https://updated.com", newSteps, models.ProxyConfig{}, 10)
+	err = app.UpdateTask(task.ID, "Updated", "https://updated.com", newSteps, models.ProxyConfig{}, 10, []string{"updated"})
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestAppUpdateTaskValidation(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	err = app.UpdateTask(task.ID, "", "https://example.com", validSteps(), models.ProxyConfig{}, 5)
+	err = app.UpdateTask(task.ID, "", "https://example.com", validSteps(), models.ProxyConfig{}, 5, nil)
 	if err == nil {
 		t.Fatal("expected validation error for empty name")
 	}

@@ -12,6 +12,7 @@
   let editProxyUsername = '';
   let editProxyPassword = '';
   let editProxyGeo = '';
+  let editTags = '';
   let editError = '';
 
   const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select'];
@@ -26,6 +27,7 @@
     editProxyUsername = $selectedTask.proxy?.username || '';
     editProxyPassword = $selectedTask.proxy?.password || '';
     editProxyGeo = $selectedTask.proxy?.geo || '';
+    editTags = ($selectedTask.tags ?? []).join(', ');
     editError = '';
     editing = true;
   }
@@ -53,7 +55,8 @@
     };
     try {
       editError = '';
-      await UpdateTask($selectedTask.id, editName, editUrl, editSteps, proxyConfig, editPriority);
+      const tags = editTags.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      await UpdateTask($selectedTask.id, editName, editUrl, editSteps, proxyConfig, editPriority, tags);
       const updated = await GetTask($selectedTask.id);
       tasks.update(list => list.map(t => t.id === updated.id ? updated : t));
       editing = false;
@@ -110,6 +113,11 @@
           <input bind:value={editProxyUsername} placeholder="Username" />
           <input type="password" bind:value={editProxyPassword} placeholder="Password" />
           <input bind:value={editProxyGeo} placeholder="Geo" style="width:50px" />
+        </div>
+        <div class="form-group">
+          <label>Tags</label>
+          <input bind:value={editTags} placeholder="tag1, tag2, tag3" />
+          <span style="font-size:11px;color:var(--text-muted)">Comma-separated</span>
         </div>
         <h4>Steps</h4>
         {#each editSteps as step, i}

@@ -103,13 +103,14 @@ func (q *Queue) SubmitBatch(ctx context.Context, tasks []models.Task) error {
 
 func (q *Queue) Cancel(taskID string) error {
 	q.mu.Lock()
-	q.cancelled[taskID] = true
 
 	if cancel, ok := q.running[taskID]; ok {
+		q.cancelled[taskID] = true
 		cancel()
 		delete(q.running, taskID)
 		q.mu.Unlock()
 	} else if cancel, ok := q.pending[taskID]; ok {
+		q.cancelled[taskID] = true
 		cancel()
 		delete(q.pending, taskID)
 		q.mu.Unlock()

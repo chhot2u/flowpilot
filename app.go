@@ -182,11 +182,14 @@ func (a *App) CancelTask(id string) error {
 }
 
 // UpdateTask updates an existing pending/failed task.
-func (a *App) UpdateTask(id, name, url string, steps []models.TaskStep, proxyConfig models.ProxyConfig, priority int) error {
+func (a *App) UpdateTask(id, name, url string, steps []models.TaskStep, proxyConfig models.ProxyConfig, priority int, tags []string) error {
 	if err := validation.ValidateTask(name, url, steps, models.TaskPriority(priority), false); err != nil {
 		return fmt.Errorf("update task: %w", err)
 	}
-	return a.db.UpdateTask(id, name, url, steps, proxyConfig, models.TaskPriority(priority))
+	if err := validation.ValidateTags(tags); err != nil {
+		return fmt.Errorf("update task: %w", err)
+	}
+	return a.db.UpdateTask(id, name, url, steps, proxyConfig, models.TaskPriority(priority), tags)
 }
 
 // CreateBatch creates multiple tasks at once. Validates all before creating any.
@@ -313,7 +316,7 @@ func (a *App) ExportResultsCSV() (string, error) {
 	}
 
 	exportPath := filepath.Join(a.dataDir, fmt.Sprintf("export_%d.csv", time.Now().Unix()))
-	file, err := os.Create(exportPath)
+	file, err := os.OpenFile(exportPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("create export file: %w", err)
 	}
