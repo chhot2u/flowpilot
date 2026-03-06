@@ -44,6 +44,19 @@
       submitting = false;
     }
   }
+
+  async function importCSV(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).map(line => line.split(',')[0]?.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    const existing = parseUrls();
+    const merged = Array.from(new Set([...existing, ...lines]));
+    urlList = merged.join('\n');
+    input.value = '';
+  }
 </script>
 
 <div class="modal-overlay" role="button" tabindex="0" on:click={() => dispatch('close')} on:keydown={(e) => e.key === 'Escape' && dispatch('close')}>
@@ -59,6 +72,10 @@
       <div class="form-group">
         <label for="batch-urls">URLs (one per line)</label>
         <textarea id="batch-urls" bind:value={urlList} rows="8" placeholder="https://example.com"></textarea>
+        <div class="hint">
+          Import CSV (first column URLs):
+          <input type="file" accept=".csv" on:change={importCSV} />
+        </div>
       </div>
       <div class="form-group">
         <label for="batch-name-template">Naming Template</label>

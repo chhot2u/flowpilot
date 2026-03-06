@@ -1,0 +1,81 @@
+<script lang="ts">
+  import type { Task, BatchProgress } from '../lib/types';
+  import { GetBatchProgress } from '../../wailsjs/go/main/App';
+
+  export let task: Task | null = null;
+
+  let progress: BatchProgress | null = null;
+  let loading = false;
+  let errorMessage = '';
+
+  $: batchId = task?.batchId;
+
+  async function refresh() {
+    if (!batchId) return;
+    loading = true;
+    try {
+      errorMessage = '';
+      progress = await GetBatchProgress(batchId);
+    } catch (err: any) {
+      errorMessage = err?.message || String(err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  $: if (batchId) {
+    refresh();
+  } else {
+    progress = null;
+  }
+</script>
+
+{#if batchId}
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Batch Progress</h3>
+      <button class="btn-secondary btn-sm" on:click={refresh} disabled={loading}>Refresh</button>
+    </div>
+    {#if errorMessage}
+      <div class="error-banner">{errorMessage}</div>
+    {:else if progress}
+      <div class="grid">
+        <div><span class="label">Total</span>{progress.total}</div>
+        <div><span class="label">Pending</span>{progress.pending}</div>
+        <div><span class="label">Queued</span>{progress.queued}</div>
+        <div><span class="label">Running</span>{progress.running}</div>
+        <div><span class="label">Completed</span>{progress.completed}</div>
+        <div><span class="label">Failed</span>{progress.failed}</div>
+      </div>
+    {:else}
+      <div class="hint">No batch progress available.</div>
+    {/if}
+  </div>
+{/if}
+
+<style>
+  .panel {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+  }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
+    font-size: 12px;
+  }
+  .label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+</style>

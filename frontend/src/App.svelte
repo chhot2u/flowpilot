@@ -11,6 +11,7 @@
   import FlowManager from './components/FlowManager.svelte';
   import BatchFromFlow from './components/BatchFromFlow.svelte';
   import LogViewer from './components/LogViewer.svelte';
+  import BatchProgressPanel from './components/BatchProgressPanel.svelte';
   import { tasks, activeTab, updateTaskInStore, selectedTask } from './lib/store';
   import { ListTasks } from '../wailsjs/go/main/App';
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
@@ -91,6 +92,7 @@
       <TaskTable on:refresh={refreshTasks} />
       <div class="side-panel">
         <TaskDetail />
+        <BatchProgressPanel task={$selectedTask} />
         <LogViewer task={$selectedTask} />
       </div>
     </div>
