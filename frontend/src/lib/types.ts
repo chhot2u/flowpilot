@@ -7,6 +7,47 @@ export interface TaskStep {
   timeout?: number;
 }
 
+export interface RecordedStep {
+  index: number;
+  action: string;
+  selector?: string;
+  value?: string;
+  timeout?: number;
+  snapshotId?: string;
+  timestamp: string;
+}
+
+export interface RecordedFlow {
+  id: string;
+  name: string;
+  description?: string;
+  steps: RecordedStep[];
+  originUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DOMSnapshot {
+  id: string;
+  flowId: string;
+  stepIndex: number;
+  html: string;
+  screenshotPath: string;
+  url: string;
+  capturedAt: string;
+}
+
+export interface BatchProgress {
+  batchId: string;
+  total: number;
+  pending: number;
+  queued: number;
+  running: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
 export interface ProxyConfig {
   server: string;
   protocol?: string;
@@ -48,6 +89,9 @@ export interface Task {
   startedAt?: string;
   completedAt?: string;
   tags?: string[];
+  batchId?: string;
+  flowId?: string;
+  headless?: boolean;
 }
 
 export interface Proxy {
@@ -70,4 +114,13 @@ export interface TaskEvent {
   status: TaskStatus;
   error?: string;
   log?: LogEntry;
+}
+
+export interface QueueMetrics {
+  running: number;
+  queued: number;
+  pending: number;
+  totalSubmitted: number;
+  totalCompleted: number;
+  totalFailed: number;
 }

@@ -26,6 +26,7 @@ const defaultTimeout = 30 * time.Second
 type Runner struct {
 	screenshotDir string
 	allowEval     atomic.Bool
+	forceHeadless bool
 }
 
 // NewRunner creates a new browser runner. Eval steps are blocked by default.
@@ -36,6 +37,11 @@ func NewRunner(screenshotDir string) (*Runner, error) {
 	r := &Runner{screenshotDir: screenshotDir}
 	r.allowEval.Store(false)
 	return r, nil
+}
+
+// SetForceHeadless enforces headless mode on all tasks when enabled.
+func (r *Runner) SetForceHeadless(force bool) {
+	r.forceHeadless = force
 }
 
 // SetAllowEval configures whether the runner permits eval step execution.

@@ -31,6 +31,7 @@ type Queue struct {
 	maxConcurrency int64
 	maxPending     int
 	onEvent        EventCallback
+	metrics        models.QueueMetrics
 
 	mu        sync.Mutex
 	running   map[string]context.CancelFunc
@@ -50,6 +51,7 @@ func New(db *database.DB, runner *browser.Runner, maxConcurrency int, onEvent Ev
 		maxConcurrency: int64(maxConcurrency),
 		maxPending:     maxConcurrency * 10, // default: 10x concurrency limit
 		onEvent:        onEvent,
+		metrics:        models.QueueMetrics{},
 		running:        make(map[string]context.CancelFunc),
 		pending:        make(map[string]context.CancelFunc),
 		cancelled:      make(map[string]bool),
@@ -92,6 +94,7 @@ func (q *Queue) Submit(ctx context.Context, task models.Task) error {
 
 	taskCtx, cancel := context.WithCancel(ctx)
 	q.pending[task.ID] = cancel
+	q.metrics.TotalSubmitted++
 	q.mu.Unlock()
 
 	if err := q.db.UpdateTaskStatus(task.ID, models.TaskStatusQueued, ""); err != nil {
@@ -167,11 +170,23 @@ func (q *Queue) RunningCount() int {
 	return len(q.running)
 }
 
+// Metrics returns a snapshot of queue metrics.
+func (q *Queue) Metrics() models.QueueMetrics {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	metrics := q.metrics
+	metrics.Running = len(q.running)
+	metrics.Queued = len(q.pending)
+	metrics.Pending = len(q.pending)
+	return metrics
+}
+
 func (q *Queue) executeTask(ctx context.Context, task models.Task) {
 	if err := q.sem.Acquire(ctx, 1); err != nil {
 		q.mu.Lock()
 		delete(q.pending, task.ID)
 		wasCancelled := q.cancelled[task.ID]
+		q.metrics.TotalFailed++
 		q.mu.Unlock()
 		if !wasCancelled {
 			_ = q.db.UpdateTaskStatus(task.ID, models.TaskStatusFailed, "failed to acquire queue slot")
@@ -296,6 +311,9 @@ func (q *Queue) handleFailure(parentCtx context.Context, task models.Task, execE
 		q.emitEvent(task.ID, models.TaskStatusFailed, fmt.Sprintf("update status: %v", err))
 		return
 	}
+	q.mu.Lock()
+	q.metrics.TotalFailed++
+	q.mu.Unlock()
 	q.emitEvent(task.ID, models.TaskStatusFailed, execErr.Error())
 }
 
@@ -308,6 +326,9 @@ func (q *Queue) handleSuccess(task models.Task, result *models.TaskResult) {
 		q.emitEvent(task.ID, models.TaskStatusFailed, fmt.Sprintf("update status: %v", err))
 		return
 	}
+	q.mu.Lock()
+	q.metrics.TotalCompleted++
+	q.mu.Unlock()
 	q.emitEvent(task.ID, models.TaskStatusCompleted, "")
 }
 

@@ -1,0 +1,89 @@
+package models
+
+import "time"
+
+// StepLog captures detailed execution data for a single step within a task run.
+type StepLog struct {
+	TaskID     string     `json:"taskId"`
+	StepIndex  int        `json:"stepIndex"`
+	Action     StepAction `json:"action"`
+	Selector   string     `json:"selector,omitempty"`
+	Value      string     `json:"value,omitempty"`
+	SnapshotID string     `json:"snapshotId,omitempty"`
+	ErrorCode  string     `json:"errorCode,omitempty"`
+	ErrorMsg   string     `json:"errorMsg,omitempty"`
+	DurationMs int64      `json:"durationMs"`
+	StartedAt  time.Time  `json:"startedAt"`
+}
+
+// NetworkLog captures a single network request/response during task execution (HAR-like).
+type NetworkLog struct {
+	TaskID          string    `json:"taskId"`
+	StepIndex       int       `json:"stepIndex"`
+	RequestURL      string    `json:"requestUrl"`
+	Method          string    `json:"method"`
+	StatusCode      int       `json:"statusCode"`
+	MimeType        string    `json:"mimeType,omitempty"`
+	RequestHeaders  string    `json:"requestHeaders,omitempty"`  // JSON string
+	ResponseHeaders string    `json:"responseHeaders,omitempty"` // JSON string
+	RequestSize     int64     `json:"requestSize"`
+	ResponseSize    int64     `json:"responseSize"`
+	DurationMs      int64     `json:"durationMs"`
+	Error           string    `json:"error,omitempty"`
+	Timestamp       time.Time `json:"timestamp"`
+}
+
+// ErrorCode is a standardized automation failure code.
+type ErrorCode string
+
+const (
+	ErrCodeTimeout        ErrorCode = "TIMEOUT"
+	ErrCodeSelectorNotFnd ErrorCode = "SELECTOR_NOT_FOUND"
+	ErrCodeNavFailed      ErrorCode = "NAVIGATION_FAILED"
+	ErrCodeProxyFailed    ErrorCode = "PROXY_FAILED"
+	ErrCodeAuthRequired   ErrorCode = "AUTH_REQUIRED"
+	ErrCodeNetworkError   ErrorCode = "NETWORK_ERROR"
+	ErrCodeEvalBlocked    ErrorCode = "EVAL_BLOCKED"
+	ErrCodeEvalFailed     ErrorCode = "EVAL_FAILED"
+	ErrCodeScreenshotFail ErrorCode = "SCREENSHOT_FAILED"
+	ErrCodeUnknown        ErrorCode = "UNKNOWN"
+)
+
+// ClassifyError maps a raw error string to a standardized ErrorCode.
+func ClassifyError(err error) ErrorCode {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case containsAny(msg, "context deadline exceeded", "timeout"):
+		return ErrCodeTimeout
+	case containsAny(msg, "selector", "not found", "waiting for selector"):
+		return ErrCodeSelectorNotFnd
+	case containsAny(msg, "navigate", "navigation"):
+		return ErrCodeNavFailed
+	case containsAny(msg, "proxy", "proxy auth"):
+		return ErrCodeProxyFailed
+	case containsAny(msg, "net::ERR_", "network"):
+		return ErrCodeNetworkError
+	case containsAny(msg, "eval", "allowEval"):
+		return ErrCodeEvalBlocked
+	case containsAny(msg, "screenshot"):
+		return ErrCodeScreenshotFail
+	default:
+		return ErrCodeUnknown
+	}
+}
+
+func containsAny(s string, substrs ...string) bool {
+	for _, sub := range substrs {
+		if len(s) >= len(sub) {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

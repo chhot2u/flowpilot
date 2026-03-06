@@ -7,7 +7,11 @@
   import CreateTaskModal from './components/CreateTaskModal.svelte';
   import BatchCreateModal from './components/BatchCreateModal.svelte';
   import ProxyPanel from './components/ProxyPanel.svelte';
-  import { tasks, activeTab, updateTaskInStore } from './lib/store';
+  import RecorderPanel from './components/RecorderPanel.svelte';
+  import FlowManager from './components/FlowManager.svelte';
+  import BatchFromFlow from './components/BatchFromFlow.svelte';
+  import LogViewer from './components/LogViewer.svelte';
+  import { tasks, activeTab, updateTaskInStore, selectedTask } from './lib/store';
   import { ListTasks } from '../wailsjs/go/main/App';
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
@@ -15,6 +19,8 @@
   let showBatchModal = false;
   let loadError = '';
   let loading = false;
+  let selectedFlow: any = null;
+  let showBatchFromFlow = false;
 
   async function refreshTasks() {
     loading = true;
@@ -63,6 +69,13 @@
     >
       Proxies
     </button>
+    <button
+      class="tab"
+      class:active={$activeTab === 'recorder'}
+      on:click={() => $activeTab = 'recorder'}
+    >
+      Recorder
+    </button>
   </nav>
 
   {#if loading}
@@ -76,10 +89,20 @@
     <TaskToolbar on:create={() => showCreateModal = true} on:batchCreate={() => showBatchModal = true} />
     <div class="main-content">
       <TaskTable on:refresh={refreshTasks} />
-      <TaskDetail />
+      <div class="side-panel">
+        <TaskDetail />
+        <LogViewer task={$selectedTask} />
+      </div>
     </div>
   {:else if $activeTab === 'proxies'}
     <ProxyPanel />
+  {:else if $activeTab === 'recorder'}
+    <div class="main-content">
+      <RecorderPanel on:saved={() => {}} />
+      <div class="side-panel">
+        <FlowManager on:use={(e) => { selectedFlow = e.detail; showBatchFromFlow = true; }} />
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -93,6 +116,14 @@
 {#if showBatchModal}
   <BatchCreateModal
     on:close={() => showBatchModal = false}
+    on:created={refreshTasks}
+  />
+{/if}
+
+{#if showBatchFromFlow}
+  <BatchFromFlow
+    flow={selectedFlow}
+    on:close={() => showBatchFromFlow = false}
     on:created={refreshTasks}
   />
 {/if}
@@ -134,6 +165,15 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+  }
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 320px;
+    padding: 12px;
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
   }
   .loading-bar {
     padding: 6px 20px;

@@ -61,8 +61,8 @@
   }
 </script>
 
-<div class="modal-overlay" on:click={() => dispatch('close')}>
-  <div class="modal" on:click|stopPropagation>
+<div class="modal-overlay" role="button" tabindex="0" on:click={() => dispatch('close')} on:keydown={(e) => e.key === 'Escape' && dispatch('close')}>
+  <div class="modal" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown={(e) => e.key === 'Escape' && dispatch('close')}>
     <div class="modal-header">
       <h2>Batch Create Tasks</h2>
       <button class="btn-secondary btn-sm" on:click={() => dispatch('close')}>x</button>
@@ -84,16 +84,16 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label>Name</label>
-              <input bind:value={entry.name} placeholder="Task name" />
+              <label for={`batch-name-${i}`}>Name</label>
+              <input id={`batch-name-${i}`} bind:value={entry.name} placeholder="Task name" />
             </div>
             <div class="form-group">
-              <label>URL</label>
-              <input bind:value={entry.url} placeholder="https://example.com" />
+              <label for={`batch-url-${i}`}>URL</label>
+              <input id={`batch-url-${i}`} bind:value={entry.url} placeholder="https://example.com" />
             </div>
             <div class="form-group" style="max-width: 100px">
-              <label>Priority</label>
-              <select bind:value={entry.priority}>
+              <label for={`batch-priority-${i}`}>Priority</label>
+              <select id={`batch-priority-${i}`} bind:value={entry.priority}>
                 <option value={1}>Low</option>
                 <option value={5}>Normal</option>
                 <option value={10}>High</option>

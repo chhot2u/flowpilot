@@ -33,6 +33,8 @@ var (
 	ErrTagEmpty            = errors.New("tag must not be empty")
 	ErrTagControlChars     = errors.New("tag must not contain control characters")
 	ErrInvalidStatus       = errors.New("invalid task status")
+	ErrInvalidBatchSize    = errors.New("batch size exceeds limit")
+	ErrInvalidTemplate     = errors.New("invalid naming template")
 )
 
 var validActions = map[models.StepAction]bool{
@@ -213,7 +215,6 @@ func ValidateProxy(server string, protocol models.ProxyProtocol) error {
 	return nil
 }
 
-
 // validStatuses defines the set of valid task status values.
 var validStatuses = map[string]bool{
 	"pending":   true,
@@ -231,4 +232,60 @@ func ValidateStatus(status string) error {
 		return fmt.Errorf("%w: %s", ErrInvalidStatus, status)
 	}
 	return nil
+}
+
+// ValidateBatchInput validates batch creation inputs.
+func ValidateBatchInput(input models.AdvancedBatchInput) error {
+	if len(input.URLs) == 0 {
+		return fmt.Errorf("batch input: %w", ErrEmptyURL)
+	}
+	if len(input.URLs) > models.MaxBatchSize {
+		return fmt.Errorf("batch input: %w", ErrInvalidBatchSize)
+	}
+	if strings.TrimSpace(input.FlowID) == "" {
+		return fmt.Errorf("batch input: flowId is required")
+	}
+	if err := ValidatePriority(models.TaskPriority(input.Priority)); err != nil {
+		return fmt.Errorf("batch input: %w", err)
+	}
+	for i, rawURL := range input.URLs {
+		if err := ValidateTaskURL(rawURL); err != nil {
+			return fmt.Errorf("batch input url %d: %w", i, err)
+		}
+	}
+	if input.NamingTemplate != "" && !batchTemplateAllowed(input.NamingTemplate) {
+		return fmt.Errorf("batch input: %w", ErrInvalidTemplate)
+	}
+	if err := ValidateTags(input.Tags); err != nil {
+		return fmt.Errorf("batch input: %w", err)
+	}
+	return nil
+}
+
+func batchTemplateAllowed(template string) bool {
+	allowed := []string{"{{url}}", "{{domain}}", "{{index}}", "{{name}}"}
+	if !strings.Contains(template, "{{") {
+		return true
+	}
+	for strings.Contains(template, "{{") {
+		start := strings.Index(template, "{{")
+		end := strings.Index(template[start+2:], "}}")
+		if end == -1 {
+			return false
+		}
+		end = start + 2 + end
+		expr := template[start : end+2]
+		valid := false
+		for _, a := range allowed {
+			if expr == a {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return false
+		}
+		template = template[end+2:]
+	}
+	return true
 }

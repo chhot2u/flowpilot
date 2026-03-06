@@ -74,6 +74,9 @@ type Task struct {
 	StartedAt   *time.Time   `json:"startedAt,omitempty"`
 	CompletedAt *time.Time   `json:"completedAt,omitempty"`
 	Tags        []string     `json:"tags,omitempty"`
+	BatchID     string       `json:"batchId,omitempty"`
+	FlowID      string       `json:"flowId,omitempty"`
+	Headless    bool         `json:"headless"`
 }
 
 // TaskResult holds the output of a completed task.

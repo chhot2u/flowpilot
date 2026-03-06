@@ -8,17 +8,31 @@ export function CancelTask(arg1:string):Promise<void>;
 
 export function CreateBatch(arg1:Array<models.BatchTaskInput>,arg2:boolean):Promise<Array<models.Task>>;
 
+export function CreateBatchFromFlow(arg1:models.AdvancedBatchInput):Promise<[models.BatchGroup, Array<models.Task>]>;
+
+export function CreateRecordedFlow(arg1:string,arg2:string,arg3:string,arg4:Array<models.RecordedStep>):Promise<models.RecordedFlow>;
+
 export function CreateTask(arg1:string,arg2:string,arg3:Array<models.TaskStep>,arg4:models.ProxyConfig,arg5:number,arg6:boolean,arg7:Array<string>):Promise<models.Task>;
 
 export function DeleteProxy(arg1:string):Promise<void>;
 
 export function DeleteTask(arg1:string):Promise<void>;
 
+export function DeleteRecordedFlow(arg1:string):Promise<void>;
+
 export function ExportResultsCSV():Promise<string>;
 
 export function ExportResultsJSON():Promise<string>;
 
+export function ExportBatchLogs(arg1:string):Promise<string>;
+
+export function ExportTaskLogs(arg1:string):Promise<[string, string]>;
+
 export function GetRunningCount():Promise<number>;
+
+export function GetQueueMetrics():Promise<models.QueueMetrics>;
+
+export function GetBatchProgress(arg1:string):Promise<models.BatchProgress>;
 
 export function GetTask(arg1:string):Promise<models.Task>;
 
@@ -28,6 +42,12 @@ export function ListProxies():Promise<Array<models.Proxy>>;
 
 export function ListTasks():Promise<Array<models.Task>>;
 
+export function ListRecordedFlows():Promise<Array<models.RecordedFlow>>;
+
+export function ListTasksByBatch(arg1:string):Promise<Array<models.Task>>;
+
+export function ListDOMSnapshots(arg1:string):Promise<Array<models.DOMSnapshot>>;
+
 export function ListTasksByStatus(arg1:string):Promise<Array<models.Task>>;
 
 export function StartAllPending():Promise<void>;
@@ -35,3 +55,7 @@ export function StartAllPending():Promise<void>;
 export function StartTask(arg1:string):Promise<void>;
 
 export function UpdateTask(arg1:string,arg2:string,arg3:string,arg4:Array<models.TaskStep>,arg5:models.ProxyConfig,arg6:number,arg7:Array<string>):Promise<void>;
+
+export function GetRecordedFlow(arg1:string):Promise<models.RecordedFlow>;
+
+export function SaveDOMSnapshot(arg1:models.DOMSnapshot):Promise<void>;

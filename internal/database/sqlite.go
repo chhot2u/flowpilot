@@ -49,6 +49,9 @@ func (db *DB) migrate() error {
 		name TEXT NOT NULL,
 		url TEXT NOT NULL,
 		steps TEXT NOT NULL DEFAULT '[]',
+		batch_id TEXT DEFAULT '',
+		flow_id TEXT DEFAULT '',
+		headless INTEGER DEFAULT 1,
 		proxy_server TEXT DEFAULT '',
 		proxy_username TEXT DEFAULT '',
 		proxy_password TEXT DEFAULT '',
@@ -64,6 +67,75 @@ func (db *DB) migrate() error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		started_at DATETIME,
 		completed_at DATETIME
+	);
+
+	CREATE TABLE IF NOT EXISTS recorded_flows (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT DEFAULT '',
+		steps TEXT NOT NULL DEFAULT '[]',
+		origin_url TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS dom_snapshots (
+		id TEXT PRIMARY KEY,
+		flow_id TEXT NOT NULL,
+		step_index INTEGER NOT NULL,
+		html TEXT NOT NULL,
+		screenshot_path TEXT NOT NULL,
+		url TEXT NOT NULL,
+		captured_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS batch_groups (
+		id TEXT PRIMARY KEY,
+		flow_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		total INTEGER NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS task_events (
+		id TEXT PRIMARY KEY,
+		task_id TEXT NOT NULL,
+		batch_id TEXT DEFAULT '',
+		from_state TEXT NOT NULL,
+		to_state TEXT NOT NULL,
+		error TEXT DEFAULT '',
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS step_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id TEXT NOT NULL,
+		step_index INTEGER NOT NULL,
+		action TEXT NOT NULL,
+		selector TEXT DEFAULT '',
+		value TEXT DEFAULT '',
+		snapshot_id TEXT DEFAULT '',
+		error_code TEXT DEFAULT '',
+		error_msg TEXT DEFAULT '',
+		duration_ms INTEGER DEFAULT 0,
+		started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS network_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id TEXT NOT NULL,
+		step_index INTEGER NOT NULL,
+		request_url TEXT NOT NULL,
+		method TEXT NOT NULL,
+		status_code INTEGER DEFAULT 0,
+		mime_type TEXT DEFAULT '',
+		request_headers TEXT DEFAULT '',
+		response_headers TEXT DEFAULT '',
+		request_size INTEGER DEFAULT 0,
+		response_size INTEGER DEFAULT 0,
+		duration_ms INTEGER DEFAULT 0,
+		error TEXT DEFAULT '',
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS proxies (
@@ -83,6 +155,12 @@ func (db *DB) migrate() error {
 
 	CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 	CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC);
+	CREATE INDEX IF NOT EXISTS idx_tasks_batch_id ON tasks(batch_id);
+	CREATE INDEX IF NOT EXISTS idx_tasks_flow_id ON tasks(flow_id);
+	CREATE INDEX IF NOT EXISTS idx_events_task_id ON task_events(task_id);
+	CREATE INDEX IF NOT EXISTS idx_events_batch_id ON task_events(batch_id);
+	CREATE INDEX IF NOT EXISTS idx_step_logs_task_id ON step_logs(task_id);
+	CREATE INDEX IF NOT EXISTS idx_network_logs_task_id ON network_logs(task_id);
 	CREATE INDEX IF NOT EXISTS idx_proxies_status ON proxies(status);
 	CREATE INDEX IF NOT EXISTS idx_proxies_geo ON proxies(geo);
 	`
@@ -99,6 +177,19 @@ func (db *DB) migrate() error {
 		// SQLite returns "duplicate column name" if column already exists — that's OK.
 		if !strings.Contains(alterErr.Error(), "duplicate column name") {
 			return fmt.Errorf("add proxy_protocol column: %w", alterErr)
+		}
+	}
+
+	alterColumns := []string{
+		"ALTER TABLE tasks ADD COLUMN batch_id TEXT DEFAULT ''",
+		"ALTER TABLE tasks ADD COLUMN flow_id TEXT DEFAULT ''",
+		"ALTER TABLE tasks ADD COLUMN headless INTEGER DEFAULT 1",
+	}
+	for _, stmt := range alterColumns {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("alter tasks: %w", err)
+			}
 		}
 	}
 
@@ -127,10 +218,15 @@ func (db *DB) CreateTask(task models.Task) error {
 		return fmt.Errorf("encrypt proxy password: %w", err)
 	}
 
+	headless := 1
+	if !task.Headless {
+		headless = 0
+	}
+
 	_, err = db.conn.Exec(`
-		INSERT INTO tasks (id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, status, max_retries, tags, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.Name, task.URL, string(stepsJSON),
+		INSERT INTO tasks (id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, status, max_retries, tags, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.Name, task.URL, string(stepsJSON), task.BatchID, task.FlowID, headless,
 		task.Proxy.Server, encUsername, encPassword, task.Proxy.Geo, task.Proxy.Protocol,
 		task.Priority, task.Status, task.MaxRetries, string(tagsJSON), task.CreatedAt,
 	)
@@ -142,7 +238,7 @@ func (db *DB) CreateTask(task models.Task) error {
 
 // GetTask retrieves a task by ID.
 func (db *DB) GetTask(id string) (*models.Task, error) {
-	row := db.conn.QueryRow(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	row := db.conn.QueryRow(`SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE id = ?`, id)
 	task, err := db.scanTask(row)
@@ -154,7 +250,7 @@ func (db *DB) GetTask(id string) (*models.Task, error) {
 
 // ListTasks returns all tasks, ordered by priority desc, created_at desc.
 func (db *DB) ListTasks() ([]models.Task, error) {
-	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.conn.Query(`SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
@@ -178,7 +274,7 @@ func (db *DB) ListTasks() ([]models.Task, error) {
 
 // ListTasksByStatus returns tasks with a given status.
 func (db *DB) ListTasksByStatus(status models.TaskStatus) ([]models.Task, error) {
-	rows, err := db.conn.Query(`SELECT id, name, url, steps, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.conn.Query(`SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`, status)
 	if err != nil {
@@ -451,9 +547,10 @@ func (db *DB) scanTask(row scanner) (*models.Task, error) {
 	var t models.Task
 	var stepsJSON, resultJSON, tagsJSON string
 	var startedAt, completedAt sql.NullTime
+	var headlessInt int
 
 	err := row.Scan(
-		&t.ID, &t.Name, &t.URL, &stepsJSON,
+		&t.ID, &t.Name, &t.URL, &stepsJSON, &t.BatchID, &t.FlowID, &headlessInt,
 		&t.Proxy.Server, &t.Proxy.Username, &t.Proxy.Password, &t.Proxy.Geo, &t.Proxy.Protocol,
 		&t.Priority, &t.Status, &t.RetryCount, &t.MaxRetries, &t.Error,
 		&resultJSON, &tagsJSON, &t.CreatedAt, &startedAt, &completedAt,
@@ -468,6 +565,8 @@ func (db *DB) scanTask(row scanner) (*models.Task, error) {
 	if completedAt.Valid {
 		t.CompletedAt = &completedAt.Time
 	}
+
+	t.Headless = headlessInt != 0
 
 	if stepsJSON != "" {
 		if err := json.Unmarshal([]byte(stepsJSON), &t.Steps); err != nil {
@@ -548,4 +647,351 @@ func (db *DB) GetTaskStats() (map[string]int, error) {
 		return nil, fmt.Errorf("iterate task stats: %w", err)
 	}
 	return stats, nil
+}
+
+// --- Recorded Flows ---
+
+// CreateRecordedFlow inserts a new recorded flow.
+func (db *DB) CreateRecordedFlow(flow models.RecordedFlow) error {
+	stepsJSON, err := json.Marshal(flow.Steps)
+	if err != nil {
+		return fmt.Errorf("marshal flow steps: %w", err)
+	}
+	_, err = db.conn.Exec(`INSERT INTO recorded_flows (id, name, description, steps, origin_url, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		flow.ID, flow.Name, flow.Description, string(stepsJSON), flow.OriginURL, flow.CreatedAt, flow.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("insert recorded flow %s: %w", flow.ID, err)
+	}
+	return nil
+}
+
+// UpdateRecordedFlow updates an existing recorded flow.
+func (db *DB) UpdateRecordedFlow(flow models.RecordedFlow) error {
+	stepsJSON, err := json.Marshal(flow.Steps)
+	if err != nil {
+		return fmt.Errorf("marshal flow steps: %w", err)
+	}
+	res, err := db.conn.Exec(`UPDATE recorded_flows SET name = ?, description = ?, steps = ?, origin_url = ?, updated_at = ? WHERE id = ?`,
+		flow.Name, flow.Description, string(stepsJSON), flow.OriginURL, flow.UpdatedAt, flow.ID)
+	if err != nil {
+		return fmt.Errorf("update recorded flow %s: %w", flow.ID, err)
+	}
+	if rows, err := res.RowsAffected(); err != nil || rows == 0 {
+		if err != nil {
+			return fmt.Errorf("check update flow %s: %w", flow.ID, err)
+		}
+		return fmt.Errorf("flow %s not found", flow.ID)
+	}
+	return nil
+}
+
+// GetRecordedFlow returns a flow by ID.
+func (db *DB) GetRecordedFlow(id string) (*models.RecordedFlow, error) {
+	row := db.conn.QueryRow(`SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows WHERE id = ?`, id)
+	var flow models.RecordedFlow
+	var stepsJSON string
+	if err := row.Scan(&flow.ID, &flow.Name, &flow.Description, &stepsJSON, &flow.OriginURL, &flow.CreatedAt, &flow.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("get recorded flow %s: %w", id, err)
+	}
+	if stepsJSON != "" {
+		if err := json.Unmarshal([]byte(stepsJSON), &flow.Steps); err != nil {
+			return nil, fmt.Errorf("parse flow steps: %w", err)
+		}
+	}
+	return &flow, nil
+}
+
+// ListRecordedFlows returns all recorded flows ordered by updated_at desc.
+func (db *DB) ListRecordedFlows() ([]models.RecordedFlow, error) {
+	rows, err := db.conn.Query(`SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list recorded flows: %w", err)
+	}
+	defer rows.Close()
+
+	flows := []models.RecordedFlow{}
+	for rows.Next() {
+		var flow models.RecordedFlow
+		var stepsJSON string
+		if err := rows.Scan(&flow.ID, &flow.Name, &flow.Description, &stepsJSON, &flow.OriginURL, &flow.CreatedAt, &flow.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan recorded flow: %w", err)
+		}
+		if stepsJSON != "" {
+			if err := json.Unmarshal([]byte(stepsJSON), &flow.Steps); err != nil {
+				return nil, fmt.Errorf("parse flow steps: %w", err)
+			}
+		}
+		flows = append(flows, flow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recorded flows: %w", err)
+	}
+	return flows, nil
+}
+
+// DeleteRecordedFlow removes a recorded flow.
+func (db *DB) DeleteRecordedFlow(id string) error {
+	res, err := db.conn.Exec(`DELETE FROM recorded_flows WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete recorded flow %s: %w", id, err)
+	}
+	if rows, err := res.RowsAffected(); err != nil || rows == 0 {
+		if err != nil {
+			return fmt.Errorf("check delete flow %s: %w", id, err)
+		}
+		return fmt.Errorf("flow %s not found", id)
+	}
+	return nil
+}
+
+// --- DOM Snapshots ---
+
+// CreateDOMSnapshot inserts a DOM snapshot record.
+func (db *DB) CreateDOMSnapshot(snapshot models.DOMSnapshot) error {
+	_, err := db.conn.Exec(`INSERT INTO dom_snapshots (id, flow_id, step_index, html, screenshot_path, url, captured_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		snapshot.ID, snapshot.FlowID, snapshot.StepIndex, snapshot.HTML, snapshot.ScreenshotPath, snapshot.URL, snapshot.CapturedAt)
+	if err != nil {
+		return fmt.Errorf("insert dom snapshot %s: %w", snapshot.ID, err)
+	}
+	return nil
+}
+
+// ListDOMSnapshots returns snapshots for a flow ordered by step_index.
+func (db *DB) ListDOMSnapshots(flowID string) ([]models.DOMSnapshot, error) {
+	rows, err := db.conn.Query(`SELECT id, flow_id, step_index, html, screenshot_path, url, captured_at FROM dom_snapshots WHERE flow_id = ? ORDER BY step_index ASC`, flowID)
+	if err != nil {
+		return nil, fmt.Errorf("list dom snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	snapshots := []models.DOMSnapshot{}
+	for rows.Next() {
+		var s models.DOMSnapshot
+		if err := rows.Scan(&s.ID, &s.FlowID, &s.StepIndex, &s.HTML, &s.ScreenshotPath, &s.URL, &s.CapturedAt); err != nil {
+			return nil, fmt.Errorf("scan dom snapshot: %w", err)
+		}
+		snapshots = append(snapshots, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dom snapshots: %w", err)
+	}
+	return snapshots, nil
+}
+
+// --- Batch Groups ---
+
+// CreateBatchGroup inserts a batch group record.
+func (db *DB) CreateBatchGroup(group models.BatchGroup) error {
+	_, err := db.conn.Exec(`INSERT INTO batch_groups (id, flow_id, name, total, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		group.ID, group.FlowID, group.Name, group.Total)
+	if err != nil {
+		return fmt.Errorf("insert batch group %s: %w", group.ID, err)
+	}
+	return nil
+}
+
+// GetBatchProgress returns aggregate status counts for a batch.
+func (db *DB) GetBatchProgress(batchID string) (models.BatchProgress, error) {
+	progress := models.BatchProgress{BatchID: batchID}
+	rows, err := db.conn.Query(`SELECT status, COUNT(*) FROM tasks WHERE batch_id = ? GROUP BY status`, batchID)
+	if err != nil {
+		return progress, fmt.Errorf("query batch progress: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return progress, fmt.Errorf("scan batch progress: %w", err)
+		}
+		progress.Total += count
+		switch models.TaskStatus(status) {
+		case models.TaskStatusPending:
+			progress.Pending = count
+		case models.TaskStatusQueued:
+			progress.Queued = count
+		case models.TaskStatusRunning:
+			progress.Running = count
+		case models.TaskStatusCompleted:
+			progress.Completed = count
+		case models.TaskStatusFailed:
+			progress.Failed = count
+		case models.TaskStatusCancelled:
+			progress.Cancelled = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return progress, fmt.Errorf("iterate batch progress: %w", err)
+	}
+	return progress, nil
+}
+
+// ListTasksByBatch returns tasks for a batch ID.
+func (db *DB) ListTasksByBatch(batchID string) ([]models.Task, error) {
+	rows, err := db.conn.Query(`SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+		priority, status, retry_count, max_retries, error, result, tags, created_at, started_at, completed_at
+		FROM tasks WHERE batch_id = ? ORDER BY created_at ASC`, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("query tasks by batch %s: %w", batchID, err)
+	}
+	defer rows.Close()
+
+	var tasks []models.Task
+	for rows.Next() {
+		task, err := db.scanTaskRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan batch task row: %w", err)
+		}
+		tasks = append(tasks, *task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate batch tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+// --- Task Events ---
+
+// InsertTaskEvent records a task lifecycle event.
+func (db *DB) InsertTaskEvent(event models.TaskLifecycleEvent) error {
+	_, err := db.conn.Exec(`INSERT INTO task_events (id, task_id, batch_id, from_state, to_state, error, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.ID, event.TaskID, event.BatchID, event.FromState, event.ToState, event.Error, event.Timestamp)
+	if err != nil {
+		return fmt.Errorf("insert task event %s: %w", event.ID, err)
+	}
+	return nil
+}
+
+// ListTaskEvents returns lifecycle events for a task.
+func (db *DB) ListTaskEvents(taskID string) ([]models.TaskLifecycleEvent, error) {
+	rows, err := db.conn.Query(`SELECT id, task_id, batch_id, from_state, to_state, error, timestamp FROM task_events WHERE task_id = ? ORDER BY timestamp ASC`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list task events: %w", err)
+	}
+	defer rows.Close()
+
+	events := []models.TaskLifecycleEvent{}
+	for rows.Next() {
+		var ev models.TaskLifecycleEvent
+		if err := rows.Scan(&ev.ID, &ev.TaskID, &ev.BatchID, &ev.FromState, &ev.ToState, &ev.Error, &ev.Timestamp); err != nil {
+			return nil, fmt.Errorf("scan task event: %w", err)
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task events: %w", err)
+	}
+	return events, nil
+}
+
+// --- Step Logs ---
+
+// InsertStepLogs inserts step logs for a task.
+func (db *DB) InsertStepLogs(taskID string, logs []models.StepLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("begin step logs tx: %w", err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO step_logs (task_id, step_index, action, selector, value, snapshot_id, error_code, error_msg, duration_ms, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare step log insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, log := range logs {
+		if _, err := stmt.Exec(taskID, log.StepIndex, log.Action, log.Selector, log.Value, log.SnapshotID, log.ErrorCode, log.ErrorMsg, log.DurationMs, log.StartedAt); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("insert step log: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit step logs: %w", err)
+	}
+	return nil
+}
+
+// ListStepLogs returns step logs for a task.
+func (db *DB) ListStepLogs(taskID string) ([]models.StepLog, error) {
+	rows, err := db.conn.Query(`SELECT task_id, step_index, action, selector, value, snapshot_id, error_code, error_msg, duration_ms, started_at
+		FROM step_logs WHERE task_id = ? ORDER BY step_index ASC`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list step logs: %w", err)
+	}
+	defer rows.Close()
+
+	logs := []models.StepLog{}
+	for rows.Next() {
+		var log models.StepLog
+		if err := rows.Scan(&log.TaskID, &log.StepIndex, &log.Action, &log.Selector, &log.Value, &log.SnapshotID, &log.ErrorCode, &log.ErrorMsg, &log.DurationMs, &log.StartedAt); err != nil {
+			return nil, fmt.Errorf("scan step log: %w", err)
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate step logs: %w", err)
+	}
+	return logs, nil
+}
+
+// --- Network Logs ---
+
+// InsertNetworkLogs inserts network logs for a task.
+func (db *DB) InsertNetworkLogs(taskID string, logs []models.NetworkLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("begin network logs tx: %w", err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO network_logs (task_id, step_index, request_url, method, status_code, mime_type, request_headers, response_headers, request_size, response_size, duration_ms, error, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare network log insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, log := range logs {
+		if _, err := stmt.Exec(taskID, log.StepIndex, log.RequestURL, log.Method, log.StatusCode, log.MimeType, log.RequestHeaders, log.ResponseHeaders, log.RequestSize, log.ResponseSize, log.DurationMs, log.Error, log.Timestamp); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("insert network log: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit network logs: %w", err)
+	}
+	return nil
+}
+
+// ListNetworkLogs returns network logs for a task.
+func (db *DB) ListNetworkLogs(taskID string) ([]models.NetworkLog, error) {
+	rows, err := db.conn.Query(`SELECT task_id, step_index, request_url, method, status_code, mime_type, request_headers, response_headers, request_size, response_size, duration_ms, error, timestamp
+		FROM network_logs WHERE task_id = ? ORDER BY timestamp ASC`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list network logs: %w", err)
+	}
+	defer rows.Close()
+
+	logs := []models.NetworkLog{}
+	for rows.Next() {
+		var log models.NetworkLog
+		if err := rows.Scan(&log.TaskID, &log.StepIndex, &log.RequestURL, &log.Method, &log.StatusCode, &log.MimeType, &log.RequestHeaders, &log.ResponseHeaders, &log.RequestSize, &log.ResponseSize, &log.DurationMs, &log.Error, &log.Timestamp); err != nil {
+			return nil, fmt.Errorf("scan network log: %w", err)
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate network logs: %w", err)
+	}
+	return logs, nil
 }

@@ -66,8 +66,8 @@
   }
 </script>
 
-<div class="modal-overlay" on:click={() => dispatch('close')}>
-  <div class="modal" on:click|stopPropagation>
+<div class="modal-overlay" role="button" tabindex="0" on:click={() => dispatch('close')} on:keydown={(e) => e.key === 'Escape' && dispatch('close')}>
+  <div class="modal" role="dialog" tabindex="-1" on:click|stopPropagation on:keydown={(e) => e.key === 'Escape' && dispatch('close')}>
     <div class="modal-header">
       <h2>Create Task</h2>
       <button class="btn-secondary btn-sm" on:click={() => dispatch('close')}>x</button>
@@ -75,58 +75,58 @@
 
     <div class="modal-body">
       <div class="form-group">
-        <label>Name</label>
-        <input bind:value={name} placeholder="My automation task" />
+        <label for="task-name">Name</label>
+        <input id="task-name" bind:value={name} placeholder="My automation task" />
       </div>
 
       <div class="form-group">
-        <label>URL</label>
-        <input bind:value={url} placeholder="https://example.com" />
+        <label for="task-url">URL</label>
+        <input id="task-url" bind:value={url} placeholder="https://example.com" />
       </div>
 
       <div class="form-row">
         <div class="form-group">
-          <label>Priority</label>
-          <select bind:value={priority}>
+          <label for="task-priority">Priority</label>
+          <select id="task-priority" bind:value={priority}>
             <option value={1}>Low</option>
             <option value={5}>Normal</option>
             <option value={10}>High</option>
           </select>
         </div>
         <div class="form-group">
-          <label>Auto Start</label>
+          <label for="task-auto-start">Auto Start</label>
           <label class="checkbox">
-            <input type="checkbox" bind:checked={autoStart} />
+            <input id="task-auto-start" type="checkbox" bind:checked={autoStart} />
             Start immediately
           </label>
         </div>
       </div>
 
       <div class="form-group">
-        <label>Tags</label>
-        <input bind:value={tagsInput} placeholder="scraping, production, daily" />
+        <label for="task-tags">Tags</label>
+        <input id="task-tags" bind:value={tagsInput} placeholder="scraping, production, daily" />
         <span class="hint">Comma-separated</span>
       </div>
 
       <h4>Proxy (Optional)</h4>
       <div class="form-row">
         <div class="form-group">
-          <label>Server</label>
-          <input bind:value={proxyServer} placeholder="host:port" />
+          <label for="proxy-server">Server</label>
+          <input id="proxy-server" bind:value={proxyServer} placeholder="host:port" />
         </div>
         <div class="form-group">
-          <label>Geo</label>
-          <input bind:value={proxyGeo} placeholder="US" />
+          <label for="proxy-geo">Geo</label>
+          <input id="proxy-geo" bind:value={proxyGeo} placeholder="US" />
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Username</label>
-          <input bind:value={proxyUsername} placeholder="optional" />
+          <label for="proxy-username">Username</label>
+          <input id="proxy-username" bind:value={proxyUsername} placeholder="optional" />
         </div>
         <div class="form-group">
-          <label>Password</label>
-          <input type="password" bind:value={proxyPassword} placeholder="optional" />
+          <label for="proxy-password">Password</label>
+          <input id="proxy-password" type="password" bind:value={proxyPassword} placeholder="optional" />
         </div>
       </div>
 

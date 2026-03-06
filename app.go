@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"web-automation/internal/batch"
 	"web-automation/internal/browser"
 	"web-automation/internal/crypto"
 	"web-automation/internal/database"
+	"web-automation/internal/logs"
 	"web-automation/internal/models"
 	"web-automation/internal/proxy"
 	"web-automation/internal/queue"
@@ -29,6 +32,8 @@ type App struct {
 	queue        *queue.Queue
 	proxyManager *proxy.Manager
 	dataDir      string
+	batchEngine  *batch.Engine
+	logExporter  *logs.Exporter
 }
 
 // NewApp creates a new App application struct.
@@ -89,6 +94,18 @@ func (a *App) startup(ctx context.Context) {
 		wailsRuntime.EventsEmit(ctx, "task:event", event)
 	})
 	a.queue.SetProxyManager(a.proxyManager)
+
+	// Initialize batch engine
+	a.batchEngine = batch.New(db)
+
+	// Initialize log exporter
+	logsDir := filepath.Join(a.dataDir, "logs")
+	logExporter, err := logs.NewExporter(db, logsDir)
+	if err != nil {
+		wailsRuntime.LogFatalf(ctx, "Failed to init log exporter: %v", err)
+		return
+	}
+	a.logExporter = logExporter
 
 	wailsRuntime.LogInfo(ctx, "Application started successfully")
 }
@@ -250,6 +267,119 @@ func (a *App) CreateBatch(inputs []models.BatchTaskInput, autoStart bool) ([]mod
 	return created, nil
 }
 
+// --- Recorded Flow API ---
+
+// CreateRecordedFlow saves a recorded flow for reuse.
+func (a *App) CreateRecordedFlow(name, description, originURL string, steps []models.RecordedStep) (*models.RecordedFlow, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("create flow: name is required")
+	}
+	flow := models.RecordedFlow{
+		ID:          uuid.New().String(),
+		Name:        name,
+		Description: description,
+		Steps:       steps,
+		OriginURL:   originURL,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := a.db.CreateRecordedFlow(flow); err != nil {
+		return nil, fmt.Errorf("create flow: %w", err)
+	}
+	return &flow, nil
+}
+
+// ListRecordedFlows returns all flows.
+func (a *App) ListRecordedFlows() ([]models.RecordedFlow, error) {
+	return a.db.ListRecordedFlows()
+}
+
+// GetRecordedFlow fetches a flow by ID.
+func (a *App) GetRecordedFlow(id string) (*models.RecordedFlow, error) {
+	if id == "" {
+		return nil, fmt.Errorf("get flow: id is required")
+	}
+	return a.db.GetRecordedFlow(id)
+}
+
+// DeleteRecordedFlow removes a flow.
+func (a *App) DeleteRecordedFlow(id string) error {
+	if id == "" {
+		return fmt.Errorf("delete flow: id is required")
+	}
+	return a.db.DeleteRecordedFlow(id)
+}
+
+// SaveDOMSnapshot persists a DOM snapshot.
+func (a *App) SaveDOMSnapshot(snapshot models.DOMSnapshot) error {
+	return a.db.CreateDOMSnapshot(snapshot)
+}
+
+// ListDOMSnapshots returns snapshots for a flow.
+func (a *App) ListDOMSnapshots(flowID string) ([]models.DOMSnapshot, error) {
+	return a.db.ListDOMSnapshots(flowID)
+}
+
+// CreateTaskFromFlow creates a single task from a flow.
+func (a *App) CreateTaskFromFlow(flowID, name, url string, proxyConfig models.ProxyConfig, priority int, autoStart bool, tags []string) (*models.Task, error) {
+	flow, err := a.db.GetRecordedFlow(flowID)
+	if err != nil {
+		return nil, fmt.Errorf("create task from flow: %w", err)
+	}
+	steps := models.FlowToTaskSteps(*flow)
+	if len(steps) > 0 && steps[0].Action == models.ActionNavigate && steps[0].Value == "" {
+		steps[0].Value = url
+	}
+	return a.CreateTask(name, url, steps, proxyConfig, priority, autoStart, tags)
+}
+
+// CreateBatchFromFlow creates batch tasks from a flow and returns the batch group.
+func (a *App) CreateBatchFromFlow(input models.AdvancedBatchInput) (models.BatchGroup, []models.Task, error) {
+	if a.batchEngine == nil {
+		return models.BatchGroup{}, nil, fmt.Errorf("batch engine unavailable")
+	}
+	flow, err := a.db.GetRecordedFlow(input.FlowID)
+	if err != nil {
+		return models.BatchGroup{}, nil, fmt.Errorf("get flow: %w", err)
+	}
+	group, tasks, err := a.batchEngine.CreateBatchFromFlow(a.ctx, *flow, input)
+	if err != nil {
+		return models.BatchGroup{}, nil, err
+	}
+	if input.AutoStart {
+		if err := a.queue.SubmitBatch(a.ctx, tasks); err != nil {
+			return group, tasks, fmt.Errorf("submit batch: %w", err)
+		}
+	}
+	return group, tasks, nil
+}
+
+// GetBatchProgress returns summary status for a batch.
+func (a *App) GetBatchProgress(batchID string) (models.BatchProgress, error) {
+	return a.db.GetBatchProgress(batchID)
+}
+
+// ListTasksByBatch returns tasks in a batch.
+func (a *App) ListTasksByBatch(batchID string) ([]models.Task, error) {
+	return a.db.ListTasksByBatch(batchID)
+}
+
+// ExportTaskLogs exports logs for a task and returns file paths.
+func (a *App) ExportTaskLogs(taskID string) (string, string, error) {
+	if a.logExporter == nil {
+		return "", "", fmt.Errorf("log exporter unavailable")
+	}
+	return a.logExporter.ExportTaskLogs(taskID)
+}
+
+// ExportBatchLogs exports logs for a batch as a ZIP file.
+func (a *App) ExportBatchLogs(batchID string) (string, error) {
+	if a.logExporter == nil {
+		return "", fmt.Errorf("log exporter unavailable")
+	}
+	return a.logExporter.ExportBatchLogs(batchID)
+}
+
 // DeleteTask cancels a running task (if any) and deletes it.
 func (a *App) DeleteTask(id string) error {
 	if id == "" {
@@ -275,6 +405,14 @@ func (a *App) GetRunningCount() int {
 		return 0
 	}
 	return a.queue.RunningCount()
+}
+
+// GetQueueMetrics returns current queue metrics.
+func (a *App) GetQueueMetrics() models.QueueMetrics {
+	if a.queue == nil {
+		return models.QueueMetrics{}
+	}
+	return a.queue.Metrics()
 }
 
 // --- Proxy API ---

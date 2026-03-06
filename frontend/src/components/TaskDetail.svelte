@@ -94,16 +94,16 @@
     {#if editing}
       <div class="edit-form">
         <div class="form-group">
-          <label>Name</label>
-          <input bind:value={editName} />
+          <label for="edit-name">Name</label>
+          <input id="edit-name" bind:value={editName} />
         </div>
         <div class="form-group">
-          <label>URL</label>
-          <input bind:value={editUrl} />
+          <label for="edit-url">URL</label>
+          <input id="edit-url" bind:value={editUrl} />
         </div>
         <div class="form-group">
-          <label>Priority</label>
-          <select bind:value={editPriority}>
+          <label for="edit-priority">Priority</label>
+          <select id="edit-priority" bind:value={editPriority}>
             <option value={1}>Low</option>
             <option value={5}>Normal</option>
             <option value={10}>High</option>
@@ -119,8 +119,8 @@
           <input bind:value={editProxyGeo} placeholder="Geo" style="width:50px" />
         </div>
         <div class="form-group">
-          <label>Tags</label>
-          <input bind:value={editTags} placeholder="tag1, tag2, tag3" />
+          <label for="edit-tags">Tags</label>
+          <input id="edit-tags" bind:value={editTags} placeholder="tag1, tag2, tag3" />
           <span style="font-size:11px;color:var(--text-muted)">Comma-separated</span>
         </div>
         <h4>Steps</h4>
