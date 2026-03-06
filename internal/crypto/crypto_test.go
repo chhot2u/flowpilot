@@ -181,3 +181,87 @@ func TestRawSQLDoesNotRevealPlaintext(t *testing.T) {
 		t.Errorf("decrypted: got %q, want %q", decrypted, original)
 	}
 }
+
+func TestDecryptWithoutKeyFails(t *testing.T) {
+	ResetForTest()
+	defer ResetForTest()
+
+	_, err := Decrypt("valid-base64-but-no-key")
+	if err == nil {
+		t.Fatal("expected error when key not initialized")
+	}
+}
+
+func TestDecryptShortCiphertextFallback(t *testing.T) {
+	setupTestKey(t)
+
+	result, err := Decrypt("YWI=")
+	if err != nil {
+		t.Fatalf("Decrypt short: %v", err)
+	}
+	if result != "YWI=" {
+		t.Errorf("expected fallback to original for short ciphertext, got %q", result)
+	}
+}
+
+func TestDecryptInvalidGCMFallback(t *testing.T) {
+	setupTestKey(t)
+
+	encoded := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	result, err := Decrypt(encoded)
+	if err != nil {
+		t.Fatalf("Decrypt invalid GCM: %v", err)
+	}
+	if result != encoded {
+		t.Errorf("expected fallback to original for invalid GCM, got %q", result)
+	}
+}
+
+func TestEncryptEmptyString(t *testing.T) {
+	setupTestKey(t)
+
+	encrypted, err := Encrypt("")
+	if err != nil {
+		t.Fatalf("Encrypt empty: %v", err)
+	}
+	if encrypted != "" {
+		t.Errorf("encrypting empty string should return empty, got %q", encrypted)
+	}
+}
+
+func TestResetForTestClearsState(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	if err := InitKeyWithBytes(key); err != nil {
+		t.Fatalf("InitKeyWithBytes: %v", err)
+	}
+
+	ResetForTest()
+
+	_, err := Encrypt("test")
+	if err == nil {
+		t.Fatal("expected error after ResetForTest")
+	}
+
+	ResetForTest()
+}
+
+func BenchmarkEncryptDecrypt(b *testing.B) {
+	ResetForTest()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	if err := InitKeyWithBytes(key); err != nil {
+		b.Fatalf("InitKeyWithBytes: %v", err)
+	}
+	defer ResetForTest()
+
+	plaintext := "benchmark-password-value"
+	for i := 0; i < b.N; i++ {
+		enc, _ := Encrypt(plaintext)
+		Decrypt(enc)
+	}
+}

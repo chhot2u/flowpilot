@@ -254,39 +254,11 @@ func ValidateBatchInput(input models.AdvancedBatchInput) error {
 			return fmt.Errorf("batch input url %d: %w", i, err)
 		}
 	}
-	if input.NamingTemplate != "" && !batchTemplateAllowed(input.NamingTemplate) {
+	if input.NamingTemplate != "" && !models.ValidateBatchTemplate(input.NamingTemplate) {
 		return fmt.Errorf("batch input: %w", ErrInvalidTemplate)
 	}
 	if err := ValidateTags(input.Tags); err != nil {
 		return fmt.Errorf("batch input: %w", err)
 	}
 	return nil
-}
-
-func batchTemplateAllowed(template string) bool {
-	allowed := []string{"{{url}}", "{{domain}}", "{{index}}", "{{name}}"}
-	if !strings.Contains(template, "{{") {
-		return true
-	}
-	for strings.Contains(template, "{{") {
-		start := strings.Index(template, "{{")
-		end := strings.Index(template[start+2:], "}}")
-		if end == -1 {
-			return false
-		}
-		end = start + 2 + end
-		expr := template[start : end+2]
-		valid := false
-		for _, a := range allowed {
-			if expr == a {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return false
-		}
-		template = template[end+2:]
-	}
-	return true
 }

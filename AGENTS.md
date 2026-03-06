@@ -1,127 +1,134 @@
 # AGENTS.md — Web Automation Dashboard
 
-This file orients agentic coding tools working in this repository. Keep it
-updated as architecture and workflows evolve.
+Orients agentic coding tools working in this repository.
 
 ## Repository Overview
-- Backend: Go 1.24, Wails v2 desktop app framework
-- Frontend: Svelte 3 + TypeScript (Vite)
-- Automation: chromedp (Chrome DevTools Protocol)
-- DB: SQLite (go-sqlite3)
+
+- **Backend:** Go 1.24, Wails v2 desktop framework, module `web-automation`
+- **Frontend:** Svelte 3 + TypeScript (Vite), in `frontend/`
+- **Automation:** chromedp (Chrome DevTools Protocol)
+- **DB:** SQLite via go-sqlite3, encrypted proxy credentials (`internal/crypto`)
+- **Key deps:** chromedp, wails/v2, google/uuid, golang.org/x/sync
 
 Key directories:
-- `main.go`, `app.go`: Wails app entry + bindings
-- `internal/`: backend packages (browser, recorder, queue, database, logs, etc.)
-- `frontend/src/`: Svelte UI
-- `frontend/wailsjs/`: auto-generated bindings (do not hand-edit)
+| Path | Purpose |
+|------|---------|
+| `main.go`, `app.go` | Wails app entry + all frontend-bound API methods |
+| `internal/` | Backend packages: browser, recorder, queue, database, logs, models, agent, batch, crypto, proxy, validation |
+| `frontend/src/` | Svelte UI components, stores, types |
+| `frontend/wailsjs/` | Auto-generated Wails bindings — **never hand-edit** |
 
 ## Build / Run Commands
 
-Backend + Desktop app:
-- `wails dev` — run app in dev mode
-- `wails build` — build production binary
+```sh
+# Desktop app
+wails dev                     # dev mode with hot-reload
+wails build                   # production binary
 
-Backend tests:
-- `go test ./...` — run all Go tests
-- `go test ./internal/queue -run TestQueueSubmit` — run a single Go test
-- `go test ./internal/queue -run TestQueueSubmit/ShouldCancel` — run a subtest
+# Go tests
+go test ./...                                          # all tests
+go test ./internal/queue -run TestQueueSubmit           # single test
+go test ./internal/queue -run TestQueueSubmit/ShouldCancel  # subtest
+go test -race -coverprofile=cover.out ./...            # with race + coverage
 
-Frontend (run from `frontend/` directory):
-- `npm run dev` — Vite dev server (frontend only)
-- `npm run build` — build frontend
-- `npm run check` — Svelte/TS type checking
-- `npm run test` — run Vitest tests
-- `npm run test -- --run` — run all tests once (Vitest)
-- `npm run test -- --run src/lib/store.test.ts` — single test file
-- `npm run test -- --run -t "store updates"` — single test by name
+# Go lint / vet
+go vet ./...                  # only linter configured
+gofmt -w <file.go>           # format a Go file
 
-Linting / type checking:
-- Go: `go vet ./...` (no explicit linter configured)
-- Frontend: `npm run check` (Svelte + TS)
-
-Formatting:
-- Go: `gofmt -w <file.go>`
-- Frontend: match existing style; no Prettier config present
+# Frontend (run from frontend/ directory)
+npm run dev                   # Vite dev server
+npm run build                 # production build
+npm run check                 # svelte-check + TypeScript
+npm run test                  # Vitest (runs once by default)
+npm run test -- --run src/lib/store.test.ts   # single test file
+npm run test -- --run -t "store updates"      # single test by name
+```
 
 ## Code Style & Conventions
 
+### Go
+
+**Imports** — three groups separated by blank lines:
+1. Standard library
+2. External (`github.com/...`)
+3. Internal (`web-automation/internal/...`)
+
+**Naming:**
+- Exported: `CamelCase`; unexported: `camelCase`
+- Files: `snake_case.go`
+- Step actions: use `models.ActionClick`, `models.ActionNavigate`, etc.
+
+**Error handling:**
+- Always wrap: `fmt.Errorf("<context>: %w", err)`
+- Validate at API boundaries (`internal/validation`)
+- Never panic; return errors
+- Use `models.ClassifyError` for standardized error codes
+
+**Concurrency:**
+- Pass `context.Context` explicitly; respect cancellation/timeouts
+- Guard shared state with mutexes (see `app.go` `recorderMu` pattern)
+- Recorder must use chromedp ExecAllocator context, not plain `context.Context`
+
+**DB schema:** migrations live in `internal/database/sqlite.go` `migrate()`. Do not change schema without updating that function.
+
+**Wails bindings:** methods on `App` must be exported, return JSON-serializable types. `wailsjs/` is regenerated automatically.
+
+### TypeScript / Svelte
+
+**Imports** — external first, then local modules.
+
+**Naming:** `camelCase` for variables/functions, `PascalCase` for types/components.
+
+**State management:**
+- All stores in `frontend/src/lib/store.ts`, update immutably (spread, map)
+- Types in `frontend/src/lib/types.ts` — keep in sync with Go models
+- Prefer derived stores for computed state
+
+**No `console.log`** in committed code; use Wails runtime logging.
+
 ### General
-- Prefer **small focused functions** (<50 lines) and modules.
-- Avoid deep nesting (>4 levels).
-- No `console.log` in frontend; use Wails runtime logging if needed.
-- Do not mutate input objects; use immutable patterns in TS/JS.
-- Do not add comments unless explicitly asked.
 
-### Imports
-- Go: standard library first, then external, then internal (blank lines between).
-- TypeScript/Svelte: external imports first, then local modules.
-- Do not edit `frontend/wailsjs/*` by hand (auto-generated by Wails).
-
-### Naming
-- Go: `CamelCase` for exported, `camelCase` for unexported; file names `snake_case.go`.
-- TS: `camelCase` variables/functions, `PascalCase` types/components.
-- Actions and enums: use existing `models.StepAction` constants (e.g., `ActionClick`).
-
-### Error Handling (Go)
-- Always wrap errors with context: `fmt.Errorf("<context>: %w", err)`.
-- Validate inputs at API boundaries (see `internal/validation`).
-- Avoid panics; return errors to caller.
-- Use `models.ClassifyError` for standardized error codes.
-
-### Types & Data Models
-- Keep JSON struct tags accurate (`json:"..."`).
-- Do not change DB schema lightly—update migrations in `internal/database/sqlite.go`.
-- Use existing model conversion helpers (`FlowToTaskSteps`, `ToTaskStep`, etc.).
-- Wails-bound methods on `App` must be exported and return JSON-serializable types.
-
-### Concurrency & Contexts
-- Pass `context.Context` explicitly; respect cancellations/timeouts.
-- Use `context.WithTimeout` for step-level timeouts.
-- Avoid data races; guard shared state with mutexes where required.
-- See `app.go` `recorderMu` pattern for recorder state protection.
-
-### Frontend State
-- Centralized stores live in `frontend/src/lib/store.ts`.
-- Update stores immutably (e.g., `map`, spread, etc.).
-- Prefer derived stores for computed state.
-- Types live in `frontend/src/lib/types.ts`; keep them in sync with Go models.
-
-## Recorder & Browser Guidelines
-- Recorder logic must use a real chromedp context (ExecAllocator + NewContext);
-  do not call chromedp APIs with a plain `context.Context`.
-- The `internal/recorder/recorder.go` is currently a stub; needs full wiring.
-- Multi-tab support must create explicit tab-switch steps.
-- Network logging should use `internal/logs/network.go` and DB insertion APIs.
-- Snapshots: use `internal/recorder/snapshot.go` and save to DB via `SaveDOMSnapshot`.
+- Small focused functions (<50 lines), avoid deep nesting (>4 levels)
+- Do not mutate input objects in TS/JS
+- Do not add comments unless explicitly asked
+- No hardcoded secrets; use env vars
 
 ## Testing Conventions
-- New features should include unit tests (Go or TS).
-- Integration tests for DB/queue/browser paths as needed.
-- Go tests live alongside packages (e.g., `internal/queue/queue_test.go`).
-- Frontend tests use `@testing-library/svelte` + Vitest + jsdom.
-- Test setup file: `frontend/vitest.setup.ts`.
+
+**Go tests** live alongside packages (e.g., `internal/queue/queue_test.go`).
+- Tests requiring encryption must call `crypto.ResetForTest()` + `crypto.InitKeyWithBytes()`
+- Use `t.TempDir()` for DB paths, `t.Cleanup` for teardown
+- Pattern: `setupTestDB(t)` / `setupTestApp(t)` helpers
+
+**Frontend tests** use `@testing-library/svelte` + Vitest + jsdom.
+- Setup file: `frontend/vitest.setup.ts`
+- Tests in `frontend/src/lib/store.test.ts`
 
 ## Security & Compliance
-- No hardcoded secrets; use env vars if needed.
-- Validate all user input (URLs, tags, proxies, steps).
-- Proxy credentials are encrypted at rest (`internal/crypto`).
-- Avoid leaking proxy credentials to the UI (mask in responses).
-- Eval scripts are blocked by default (`allowEval=false`); see `browser.go`.
 
-## Agent TODOs (Update as work progresses)
-1. ~~Wire recorder browser launch (embedded browser opens on record).~~ **DONE**
-2. ~~Capture click/type/navigation events and stream steps to UI.~~ **DONE**
-3. ~~Add multi-tab recording with explicit tab-switch steps.~~ **DONE** — `ActionTabSwitch` added; recorder listens for `target.EventTargetInfoChanged`.
-4. ~~Enable network request logging during recording.~~ **DONE** — `NetworkLogger` wired into recorder; logs persisted on stop.
-5. ~~Wire DOM snapshots + selector generation.~~ **DONE** — `Snapshotter` wired into recorder; snapshots captured per step.
-6. ~~Implement playback engine for recorded flows.~~ **DONE** — `PlayRecordedFlow` API on `App`.
-7. ~~Add compliance redaction + audit trail and 90-day retention policy.~~ **DONE** — `PurgeOldRecords` (90-day), `ListAuditTrail` API, auto-cleanup goroutine.
-8. ~~Mask proxy credentials in all frontend responses.~~ **DONE** — `ListProxies` masks username/password.
-9. ~~Add background agent/service for closed-app runs.~~ **DONE** — `internal/agent` package polls pending tasks headlessly.
-10. ~~Add CI pipeline, pagination, UX polish, and E2E tests.~~ **DONE** — `.github/workflows/ci.yml`, `ListTasksPaginated` API, frontend types updated.
+- Proxy credentials encrypted at rest (`internal/crypto`); masked in frontend via `maskCredential()` in `app.go`
+- Eval scripts blocked by default (`allowEval=false`); dangerous patterns rejected in `browser.go`
+- Input validation for URLs, tags, proxies, steps (`internal/validation`)
+- 90-day data retention: `PurgeOldRecords` runs daily via goroutine in `app.go`
+- Audit trail via `task_events` table + `ListAuditTrail` API
 
-## Notes
-- No Cursor/Copilot rules detected in this repository.
-- If rules are added later (e.g., `.cursor/rules/`, `.cursorrules`,
-  `.github/copilot-instructions.md`), incorporate them here.
-- ~~The `activeTab` store type in `store.ts` needs updating to include `'recorder'`.~~ **DONE**
+## Architecture Notes
+
+- **Recorder** (`internal/recorder/`): opens headless=false Chrome, injects JS capture script via CDP bindings, records click/type/navigate/tab-switch/select events. Wires `NetworkLogger` for HAR-like network capture and `Snapshotter` for DOM screenshots per step.
+- **Queue** (`internal/queue/`): semaphore-based concurrency limiter with retry backoff, proxy rotation, and lifecycle event emission.
+- **Agent** (`internal/agent/`): headless background service that polls pending tasks without GUI.
+- **Batch** (`internal/batch/`): creates task groups from recorded flows with URL/template substitution.
+- **CI:** `.github/workflows/ci.yml` runs `go vet`, `go test`, `npm run check`, `npm run test`.
+
+## Agent TODOs (All Complete)
+
+1. ~~Wire recorder browser launch~~ **DONE**
+2. ~~Capture click/type/navigation events~~ **DONE**
+3. ~~Multi-tab recording~~ **DONE** — `ActionTabSwitch`, `target.EventTargetInfoChanged`
+4. ~~Network request logging~~ **DONE** — `NetworkLogger` in recorder
+5. ~~DOM snapshots + selector generation~~ **DONE** — `Snapshotter` per step
+6. ~~Playback engine~~ **DONE** — `PlayRecordedFlow` API
+7. ~~Compliance + audit trail + 90-day retention~~ **DONE**
+8. ~~Mask proxy credentials~~ **DONE** — `ListProxies` masks creds
+9. ~~Background agent~~ **DONE** — `internal/agent`
+10. ~~CI pipeline, pagination, UX~~ **DONE** — CI, `ListTasksPaginated`

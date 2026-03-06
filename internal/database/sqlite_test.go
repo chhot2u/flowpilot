@@ -838,3 +838,763 @@ func TestUpdateTaskRejectsRunning(t *testing.T) {
 		t.Fatal("expected error when updating running task")
 	}
 }
+
+// --- Recorded Flows CRUD Tests ---
+
+func makeFlow(id, name string) models.RecordedFlow {
+	now := time.Now().Truncate(time.Second)
+	return models.RecordedFlow{
+		ID:          id,
+		Name:        name,
+		Description: "Test flow description",
+		Steps: []models.RecordedStep{
+			{Index: 0, Action: models.ActionNavigate, Value: "https://example.com", Timestamp: now},
+			{Index: 1, Action: models.ActionClick, Selector: "#btn", Timestamp: now},
+		},
+		OriginURL: "https://example.com",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+}
+
+func TestCreateAndGetRecordedFlow(t *testing.T) {
+	db := setupTestDB(t)
+	flow := makeFlow("flow-1", "Test Flow")
+
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	got, err := db.GetRecordedFlow("flow-1")
+	if err != nil {
+		t.Fatalf("GetRecordedFlow: %v", err)
+	}
+
+	if got.ID != flow.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, flow.ID)
+	}
+	if got.Name != flow.Name {
+		t.Errorf("Name: got %q, want %q", got.Name, flow.Name)
+	}
+	if got.Description != flow.Description {
+		t.Errorf("Description: got %q, want %q", got.Description, flow.Description)
+	}
+	if len(got.Steps) != 2 {
+		t.Errorf("Steps count: got %d, want 2", len(got.Steps))
+	}
+	if got.OriginURL != flow.OriginURL {
+		t.Errorf("OriginURL: got %q, want %q", got.OriginURL, flow.OriginURL)
+	}
+}
+
+func TestGetRecordedFlowNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	_, err := db.GetRecordedFlow("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent flow")
+	}
+}
+
+func TestListRecordedFlows(t *testing.T) {
+	db := setupTestDB(t)
+
+	for i := 0; i < 3; i++ {
+		flow := makeFlow(fmt.Sprintf("list-flow-%d", i), fmt.Sprintf("Flow %d", i))
+		flow.UpdatedAt = time.Now().Add(time.Duration(i) * time.Second)
+		if err := db.CreateRecordedFlow(flow); err != nil {
+			t.Fatalf("CreateRecordedFlow %d: %v", i, err)
+		}
+	}
+
+	flows, err := db.ListRecordedFlows()
+	if err != nil {
+		t.Fatalf("ListRecordedFlows: %v", err)
+	}
+	if len(flows) != 3 {
+		t.Errorf("flow count: got %d, want 3", len(flows))
+	}
+}
+
+func TestListRecordedFlowsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	flows, err := db.ListRecordedFlows()
+	if err != nil {
+		t.Fatalf("ListRecordedFlows: %v", err)
+	}
+	if len(flows) != 0 {
+		t.Errorf("expected 0 flows, got %d", len(flows))
+	}
+}
+
+func TestUpdateRecordedFlow(t *testing.T) {
+	db := setupTestDB(t)
+	flow := makeFlow("upd-flow-1", "Original")
+
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	flow.Name = "Updated"
+	flow.Description = "Updated description"
+	flow.UpdatedAt = time.Now()
+
+	if err := db.UpdateRecordedFlow(flow); err != nil {
+		t.Fatalf("UpdateRecordedFlow: %v", err)
+	}
+
+	got, err := db.GetRecordedFlow("upd-flow-1")
+	if err != nil {
+		t.Fatalf("GetRecordedFlow: %v", err)
+	}
+	if got.Name != "Updated" {
+		t.Errorf("Name: got %q, want %q", got.Name, "Updated")
+	}
+	if got.Description != "Updated description" {
+		t.Errorf("Description: got %q, want %q", got.Description, "Updated description")
+	}
+}
+
+func TestUpdateRecordedFlowNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	flow := makeFlow("nonexistent-flow", "Ghost")
+	err := db.UpdateRecordedFlow(flow)
+	if err == nil {
+		t.Fatal("expected error for nonexistent flow update")
+	}
+}
+
+func TestDeleteRecordedFlow(t *testing.T) {
+	db := setupTestDB(t)
+	flow := makeFlow("del-flow-1", "Delete Me")
+
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	if err := db.DeleteRecordedFlow("del-flow-1"); err != nil {
+		t.Fatalf("DeleteRecordedFlow: %v", err)
+	}
+
+	_, err := db.GetRecordedFlow("del-flow-1")
+	if err == nil {
+		t.Error("GetRecordedFlow should fail after deletion")
+	}
+}
+
+func TestDeleteRecordedFlowNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.DeleteRecordedFlow("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent flow deletion")
+	}
+}
+
+// --- DOM Snapshots Tests ---
+
+func TestCreateAndListDOMSnapshots(t *testing.T) {
+	db := setupTestDB(t)
+
+	snapshots := []models.DOMSnapshot{
+		{ID: "snap-1", FlowID: "flow-1", StepIndex: 0, HTML: "<html>step0</html>", ScreenshotPath: "/tmp/s0.png", URL: "https://example.com", CapturedAt: time.Now()},
+		{ID: "snap-2", FlowID: "flow-1", StepIndex: 1, HTML: "<html>step1</html>", ScreenshotPath: "/tmp/s1.png", URL: "https://example.com/page", CapturedAt: time.Now()},
+		{ID: "snap-3", FlowID: "flow-2", StepIndex: 0, HTML: "<html>other</html>", ScreenshotPath: "/tmp/s2.png", URL: "https://other.com", CapturedAt: time.Now()},
+	}
+
+	for _, s := range snapshots {
+		if err := db.CreateDOMSnapshot(s); err != nil {
+			t.Fatalf("CreateDOMSnapshot %s: %v", s.ID, err)
+		}
+	}
+
+	got, err := db.ListDOMSnapshots("flow-1")
+	if err != nil {
+		t.Fatalf("ListDOMSnapshots: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("snapshot count for flow-1: got %d, want 2", len(got))
+	}
+
+	if got[0].StepIndex != 0 {
+		t.Errorf("first snapshot StepIndex: got %d, want 0", got[0].StepIndex)
+	}
+	if got[1].StepIndex != 1 {
+		t.Errorf("second snapshot StepIndex: got %d, want 1", got[1].StepIndex)
+	}
+}
+
+func TestListDOMSnapshotsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	got, err := db.ListDOMSnapshots("nonexistent")
+	if err != nil {
+		t.Fatalf("ListDOMSnapshots: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 snapshots, got %d", len(got))
+	}
+}
+
+// --- Batch Groups Tests ---
+
+func TestCreateBatchGroupAndProgress(t *testing.T) {
+	db := setupTestDB(t)
+
+	group := models.BatchGroup{
+		ID:     "batch-1",
+		FlowID: "flow-1",
+		Name:   "Test Batch",
+		Total:  3,
+	}
+	if err := db.CreateBatchGroup(group); err != nil {
+		t.Fatalf("CreateBatchGroup: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		task := makeTask(fmt.Sprintf("bt-%d", i), fmt.Sprintf("Batch Task %d", i))
+		task.BatchID = "batch-1"
+		if i == 0 {
+			task.Status = models.TaskStatusCompleted
+		} else if i == 1 {
+			task.Status = models.TaskStatusFailed
+		}
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+	}
+
+	progress, err := db.GetBatchProgress("batch-1")
+	if err != nil {
+		t.Fatalf("GetBatchProgress: %v", err)
+	}
+	if progress.BatchID != "batch-1" {
+		t.Errorf("BatchID: got %q, want %q", progress.BatchID, "batch-1")
+	}
+	if progress.Total != 3 {
+		t.Errorf("Total: got %d, want 3", progress.Total)
+	}
+	if progress.Completed != 1 {
+		t.Errorf("Completed: got %d, want 1", progress.Completed)
+	}
+	if progress.Failed != 1 {
+		t.Errorf("Failed: got %d, want 1", progress.Failed)
+	}
+	if progress.Pending != 1 {
+		t.Errorf("Pending: got %d, want 1", progress.Pending)
+	}
+}
+
+func TestGetBatchProgressEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	progress, err := db.GetBatchProgress("nonexistent")
+	if err != nil {
+		t.Fatalf("GetBatchProgress: %v", err)
+	}
+	if progress.Total != 0 {
+		t.Errorf("Total: got %d, want 0", progress.Total)
+	}
+}
+
+// --- ListTasksByBatch Tests ---
+
+func TestListTasksByBatch(t *testing.T) {
+	db := setupTestDB(t)
+
+	for i := 0; i < 3; i++ {
+		task := makeTask(fmt.Sprintf("batch-task-%d", i), fmt.Sprintf("Task %d", i))
+		task.BatchID = "batch-x"
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+	}
+
+	unbatched := makeTask("unbatched-1", "Unbatched")
+	if err := db.CreateTask(unbatched); err != nil {
+		t.Fatalf("CreateTask unbatched: %v", err)
+	}
+
+	tasks, err := db.ListTasksByBatch("batch-x")
+	if err != nil {
+		t.Fatalf("ListTasksByBatch: %v", err)
+	}
+	if len(tasks) != 3 {
+		t.Errorf("batch task count: got %d, want 3", len(tasks))
+	}
+}
+
+func TestListTasksByBatchEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	tasks, err := db.ListTasksByBatch("nonexistent")
+	if err != nil {
+		t.Fatalf("ListTasksByBatch: %v", err)
+	}
+	if tasks != nil && len(tasks) != 0 {
+		t.Errorf("expected no tasks, got %d", len(tasks))
+	}
+}
+
+// --- ListTasksByBatchStatus Tests ---
+
+func TestListTasksByBatchStatus(t *testing.T) {
+	db := setupTestDB(t)
+
+	for i := 0; i < 4; i++ {
+		task := makeTask(fmt.Sprintf("bs-task-%d", i), fmt.Sprintf("Task %d", i))
+		task.BatchID = "batch-status"
+		if i < 2 {
+			task.Status = models.TaskStatusCompleted
+		} else {
+			task.Status = models.TaskStatusFailed
+		}
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+	}
+
+	completed, err := db.ListTasksByBatchStatus("batch-status", models.TaskStatusCompleted)
+	if err != nil {
+		t.Fatalf("ListTasksByBatchStatus: %v", err)
+	}
+	if len(completed) != 2 {
+		t.Errorf("completed count: got %d, want 2", len(completed))
+	}
+
+	failed, err := db.ListTasksByBatchStatus("batch-status", models.TaskStatusFailed)
+	if err != nil {
+		t.Fatalf("ListTasksByBatchStatus: %v", err)
+	}
+	if len(failed) != 2 {
+		t.Errorf("failed count: got %d, want 2", len(failed))
+	}
+}
+
+// --- Step Logs Tests ---
+
+func TestInsertAndListStepLogs(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("step-log-task", "Step Log Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := []models.StepLog{
+		{TaskID: "step-log-task", StepIndex: 0, Action: models.ActionNavigate, Value: "https://example.com", DurationMs: 100, StartedAt: time.Now()},
+		{TaskID: "step-log-task", StepIndex: 1, Action: models.ActionClick, Selector: "#btn", DurationMs: 50, StartedAt: time.Now()},
+		{TaskID: "step-log-task", StepIndex: 2, Action: models.ActionType, Selector: "#input", Value: "hello", ErrorCode: "TIMEOUT", ErrorMsg: "timed out", DurationMs: 5000, StartedAt: time.Now()},
+	}
+
+	if err := db.InsertStepLogs("step-log-task", logs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	got, err := db.ListStepLogs("step-log-task")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("step log count: got %d, want 3", len(got))
+	}
+
+	if got[0].Action != models.ActionNavigate {
+		t.Errorf("log[0].Action: got %q, want %q", got[0].Action, models.ActionNavigate)
+	}
+	if got[2].ErrorCode != "TIMEOUT" {
+		t.Errorf("log[2].ErrorCode: got %q, want TIMEOUT", got[2].ErrorCode)
+	}
+	if got[2].ErrorMsg != "timed out" {
+		t.Errorf("log[2].ErrorMsg: got %q, want %q", got[2].ErrorMsg, "timed out")
+	}
+}
+
+func TestInsertStepLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.InsertStepLogs("task-1", nil)
+	if err != nil {
+		t.Errorf("InsertStepLogs(nil) should return nil, got: %v", err)
+	}
+
+	err = db.InsertStepLogs("task-1", []models.StepLog{})
+	if err != nil {
+		t.Errorf("InsertStepLogs(empty) should return nil, got: %v", err)
+	}
+}
+
+func TestListStepLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	got, err := db.ListStepLogs("nonexistent")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(got))
+	}
+}
+
+// --- Network Logs Tests ---
+
+func TestInsertAndListNetworkLogs(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("net-log-task", "Network Log Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := []models.NetworkLog{
+		{TaskID: "net-log-task", StepIndex: 0, RequestURL: "https://example.com", Method: "GET", StatusCode: 200, MimeType: "text/html", DurationMs: 150, Timestamp: time.Now()},
+		{TaskID: "net-log-task", StepIndex: 0, RequestURL: "https://cdn.example.com/style.css", Method: "GET", StatusCode: 200, MimeType: "text/css", ResponseSize: 1024, DurationMs: 50, Timestamp: time.Now()},
+		{TaskID: "net-log-task", StepIndex: 1, RequestURL: "https://api.example.com/data", Method: "POST", StatusCode: 500, Error: "server error", DurationMs: 300, Timestamp: time.Now()},
+	}
+
+	if err := db.InsertNetworkLogs("net-log-task", logs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	got, err := db.ListNetworkLogs("net-log-task")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("network log count: got %d, want 3", len(got))
+	}
+
+	if got[0].Method != "GET" {
+		t.Errorf("log[0].Method: got %q, want GET", got[0].Method)
+	}
+	if got[0].StatusCode != 200 {
+		t.Errorf("log[0].StatusCode: got %d, want 200", got[0].StatusCode)
+	}
+	if got[2].Error != "server error" {
+		t.Errorf("log[2].Error: got %q, want %q", got[2].Error, "server error")
+	}
+}
+
+func TestInsertNetworkLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.InsertNetworkLogs("task-1", nil)
+	if err != nil {
+		t.Errorf("InsertNetworkLogs(nil) should return nil, got: %v", err)
+	}
+}
+
+func TestListNetworkLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	got, err := db.ListNetworkLogs("nonexistent")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(got))
+	}
+}
+
+// --- Task Events Tests ---
+
+func TestInsertAndListTaskEvents(t *testing.T) {
+	db := setupTestDB(t)
+
+	events := []models.TaskLifecycleEvent{
+		{ID: "ev-1", TaskID: "task-1", BatchID: "batch-1", FromState: models.TaskStatusPending, ToState: models.TaskStatusQueued, Timestamp: time.Now()},
+		{ID: "ev-2", TaskID: "task-1", BatchID: "batch-1", FromState: models.TaskStatusQueued, ToState: models.TaskStatusRunning, Timestamp: time.Now()},
+		{ID: "ev-3", TaskID: "task-1", BatchID: "batch-1", FromState: models.TaskStatusRunning, ToState: models.TaskStatusCompleted, Timestamp: time.Now()},
+	}
+
+	for _, ev := range events {
+		if err := db.InsertTaskEvent(ev); err != nil {
+			t.Fatalf("InsertTaskEvent %s: %v", ev.ID, err)
+		}
+	}
+
+	got, err := db.ListTaskEvents("task-1")
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("event count: got %d, want 3", len(got))
+	}
+
+	if got[0].FromState != models.TaskStatusPending {
+		t.Errorf("event[0].FromState: got %q, want %q", got[0].FromState, models.TaskStatusPending)
+	}
+	if got[2].ToState != models.TaskStatusCompleted {
+		t.Errorf("event[2].ToState: got %q, want %q", got[2].ToState, models.TaskStatusCompleted)
+	}
+}
+
+func TestListTaskEventsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	got, err := db.ListTaskEvents("nonexistent")
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 events, got %d", len(got))
+	}
+}
+
+// --- ListAuditTrail with limit Tests ---
+
+func TestListAuditTrailWithLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	for i := 0; i < 10; i++ {
+		ev := models.TaskLifecycleEvent{
+			ID:        fmt.Sprintf("audit-ev-%d", i),
+			TaskID:    "task-1",
+			FromState: models.TaskStatusPending,
+			ToState:   models.TaskStatusRunning,
+			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
+		}
+		if err := db.InsertTaskEvent(ev); err != nil {
+			t.Fatalf("InsertTaskEvent %d: %v", i, err)
+		}
+	}
+
+	got, err := db.ListAuditTrail("", 5)
+	if err != nil {
+		t.Fatalf("ListAuditTrail: %v", err)
+	}
+	if len(got) != 5 {
+		t.Errorf("limited audit trail: got %d, want 5", len(got))
+	}
+}
+
+// --- ListTasksPaginated edge cases ---
+
+func TestListTasksPaginatedInvalidPage(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("page-edge-1", "Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	result, err := db.ListTasksPaginated(0, 10, "", "")
+	if err != nil {
+		t.Fatalf("ListTasksPaginated with page 0: %v", err)
+	}
+	if result.Page != 1 {
+		t.Errorf("Page: got %d, want 1 (corrected from 0)", result.Page)
+	}
+}
+
+func TestListTasksPaginatedInvalidPageSize(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("page-size-1", "Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	result, err := db.ListTasksPaginated(1, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListTasksPaginated with pageSize 0: %v", err)
+	}
+	if result.PageSize != 50 {
+		t.Errorf("PageSize: got %d, want 50 (default)", result.PageSize)
+	}
+
+	result2, err := db.ListTasksPaginated(1, 999, "", "")
+	if err != nil {
+		t.Fatalf("ListTasksPaginated with pageSize 999: %v", err)
+	}
+	if result2.PageSize != 50 {
+		t.Errorf("PageSize: got %d, want 50 (clamped)", result2.PageSize)
+	}
+}
+
+func TestListTasksPaginatedWithTagFilter(t *testing.T) {
+	db := setupTestDB(t)
+
+	task1 := makeTask("tag-filter-1", "With Tag")
+	task1.Tags = []string{"web", "automation"}
+	task2 := makeTask("tag-filter-2", "Without Tag")
+	task2.Tags = []string{"other"}
+
+	if err := db.CreateTask(task1); err != nil {
+		t.Fatalf("CreateTask 1: %v", err)
+	}
+	if err := db.CreateTask(task2); err != nil {
+		t.Fatalf("CreateTask 2: %v", err)
+	}
+
+	result, err := db.ListTasksPaginated(1, 10, "", "web")
+	if err != nil {
+		t.Fatalf("ListTasksPaginated with tag: %v", err)
+	}
+	if result.Total != 1 {
+		t.Errorf("Total with tag filter: got %d, want 1", result.Total)
+	}
+}
+
+func TestListTasksPaginatedWithStatusAll(t *testing.T) {
+	db := setupTestDB(t)
+
+	task1 := makeTask("all-1", "Pending")
+	task1.Status = models.TaskStatusPending
+	task2 := makeTask("all-2", "Completed")
+	task2.Status = models.TaskStatusCompleted
+
+	if err := db.CreateTask(task1); err != nil {
+		t.Fatalf("CreateTask 1: %v", err)
+	}
+	if err := db.CreateTask(task2); err != nil {
+		t.Fatalf("CreateTask 2: %v", err)
+	}
+
+	result, err := db.ListTasksPaginated(1, 10, "all", "")
+	if err != nil {
+		t.Fatalf("ListTasksPaginated with status=all: %v", err)
+	}
+	if result.Total != 2 {
+		t.Errorf("Total with status=all: got %d, want 2", result.Total)
+	}
+}
+
+// --- UpdateTaskStatus Not Found ---
+
+func TestUpdateTaskStatusNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.UpdateTaskStatus("nonexistent", models.TaskStatusRunning, "")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task status update")
+	}
+}
+
+// --- UpdateTaskResult Not Found ---
+
+func TestUpdateTaskResultNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	result := models.TaskResult{TaskID: "x", Success: true}
+	err := db.UpdateTaskResult("nonexistent", result)
+	if err == nil {
+		t.Fatal("expected error for nonexistent task result update")
+	}
+}
+
+// --- IncrementRetry Not Found ---
+
+func TestIncrementRetryNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.IncrementRetry("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task retry increment")
+	}
+}
+
+// --- UpdateProxyHealth Not Found ---
+
+func TestUpdateProxyHealthNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.UpdateProxyHealth("nonexistent", models.ProxyStatusHealthy, 100)
+	if err == nil {
+		t.Fatal("expected error for nonexistent proxy health update")
+	}
+}
+
+// --- UpdateTask Not Found ---
+
+func TestUpdateTaskNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	err := db.UpdateTask("nonexistent", "Name", "https://example.com", nil, models.ProxyConfig{}, models.PriorityNormal, nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent task update")
+	}
+}
+
+// --- Headless field Tests ---
+
+func TestTaskHeadlessField(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("headless-1", "Headless Task")
+	task.Headless = true
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask headless=true: %v", err)
+	}
+
+	got, err := db.GetTask("headless-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !got.Headless {
+		t.Error("Headless should be true")
+	}
+
+	task2 := makeTask("headless-2", "Non-Headless Task")
+	task2.Headless = false
+	if err := db.CreateTask(task2); err != nil {
+		t.Fatalf("CreateTask headless=false: %v", err)
+	}
+
+	got2, err := db.GetTask("headless-2")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got2.Headless {
+		t.Error("Headless should be false")
+	}
+}
+
+// --- PurgeOldRecords comprehensive test ---
+
+func TestPurgeOldRecordsWithOldData(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("purge-old-1", "Old Task")
+	task.Status = models.TaskStatusCompleted
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	oldTime := time.Now().Add(-100 * 24 * time.Hour)
+	_, err := db.conn.Exec(`UPDATE tasks SET completed_at = ?, status = 'completed' WHERE id = ?`, oldTime, "purge-old-1")
+	if err != nil {
+		t.Fatalf("set old completed_at: %v", err)
+	}
+
+	if err := db.InsertStepLogs("purge-old-1", []models.StepLog{
+		{TaskID: "purge-old-1", StepIndex: 0, Action: models.ActionClick, DurationMs: 100, StartedAt: time.Now()},
+	}); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	if err := db.InsertNetworkLogs("purge-old-1", []models.NetworkLog{
+		{TaskID: "purge-old-1", StepIndex: 0, RequestURL: "https://example.com", Method: "GET", StatusCode: 200, Timestamp: time.Now()},
+	}); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	if err := db.InsertTaskEvent(models.TaskLifecycleEvent{
+		ID: "purge-evt-1", TaskID: "purge-old-1", FromState: models.TaskStatusPending, ToState: models.TaskStatusCompleted, Timestamp: time.Now(),
+	}); err != nil {
+		t.Fatalf("InsertTaskEvent: %v", err)
+	}
+
+	n, err := db.PurgeOldRecords(90)
+	if err != nil {
+		t.Fatalf("PurgeOldRecords: %v", err)
+	}
+	if n == 0 {
+		t.Error("expected some records to be purged")
+	}
+
+	_, err = db.GetTask("purge-old-1")
+	if err == nil {
+		t.Error("task should be purged")
+	}
+
+	stepLogs, _ := db.ListStepLogs("purge-old-1")
+	if len(stepLogs) != 0 {
+		t.Errorf("step logs should be purged, got %d", len(stepLogs))
+	}
+
+	netLogs, _ := db.ListNetworkLogs("purge-old-1")
+	if len(netLogs) != 0 {
+		t.Errorf("network logs should be purged, got %d", len(netLogs))
+	}
+
+	events, _ := db.ListTaskEvents("purge-old-1")
+	if len(events) != 0 {
+		t.Errorf("events should be purged, got %d", len(events))
+	}
+}

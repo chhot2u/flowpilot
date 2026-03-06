@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Task, Proxy, TaskEvent, TaskStatus, RecordedFlow, RecordedStep, QueueMetrics } from './types';
+import type { Task, Proxy, TaskEvent, TaskStatus, RecordedFlow, RecordedStep } from './types';
 
 export const tasks = writable<Task[]>([]);
 export const proxies = writable<Proxy[]>([]);
@@ -8,7 +8,6 @@ export const activeTab = writable<'tasks' | 'proxies' | 'recorder'>('tasks');
 export const statusFilter = writable<TaskStatus | 'all'>('all');
 export const tagFilter = writable<string>('');
 export const recordedFlows = writable<RecordedFlow[]>([]);
-export const queueMetrics = writable<QueueMetrics | null>(null);
 export const isRecording = writable<boolean>(false);
 export const recordingSteps = writable<RecordedStep[]>([]);
 

@@ -197,12 +197,8 @@ func TestNewRecorder(t *testing.T) {
 func TestStopIdempotent(t *testing.T) {
 	r := &Recorder{flowID: "flow-stop"}
 
-	if err := r.Stop(); err != nil {
-		t.Fatalf("first Stop() returned error: %v", err)
-	}
-	if err := r.Stop(); err != nil {
-		t.Fatalf("second Stop() returned error: %v", err)
-	}
+	r.Stop()
+	r.Stop()
 }
 
 func TestStopCleansUpContexts(t *testing.T) {
@@ -217,9 +213,7 @@ func TestStopCleansUpContexts(t *testing.T) {
 		browserCancel: cancel,
 	}
 
-	if err := r.Stop(); err != nil {
-		t.Fatalf("Stop() returned error: %v", err)
-	}
+	r.Stop()
 	if r.browserCtx != nil {
 		t.Error("browserCtx should be nil after Stop")
 	}

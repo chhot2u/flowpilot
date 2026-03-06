@@ -358,3 +358,232 @@ func TestValidateProxy(t *testing.T) {
 		})
 	}
 }
+
+// --- ValidateTags Tests ---
+
+func TestValidateTags(t *testing.T) {
+	tests := []struct {
+		name    string
+		tags    []string
+		wantErr error
+	}{
+		{"nil tags", nil, nil},
+		{"empty tags", []string{}, nil},
+		{"single valid tag", []string{"web"}, nil},
+		{"multiple valid tags", []string{"web", "automation", "test"}, nil},
+		{"max 20 tags", make20Tags(), nil},
+		{"too many tags", make21Tags(), ErrTooManyTags},
+		{"empty tag", []string{"good", ""}, ErrTagEmpty},
+		{"whitespace-only tag", []string{"good", "   "}, ErrTagEmpty},
+		{"tag too long", []string{strings.Repeat("x", 51)}, ErrTagTooLong},
+		{"tag exactly 50 chars", []string{strings.Repeat("y", 50)}, nil},
+		{"tag with control chars", []string{"bad\ttag"}, ErrTagControlChars},
+		{"tag with newline", []string{"bad\ntag"}, ErrTagControlChars},
+		{"tag with null byte", []string{"bad\x00tag"}, ErrTagControlChars},
+		{"valid unicode tag", []string{"日本語タグ"}, nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateTags(tc.tags)
+			if tc.wantErr == nil && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("got error %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func make20Tags() []string {
+	tags := make([]string, 20)
+	for i := range tags {
+		tags[i] = "tag-" + strings.Repeat("a", i+1)
+	}
+	return tags
+}
+
+func make21Tags() []string {
+	tags := make([]string, 21)
+	for i := range tags {
+		tags[i] = "tag-" + strings.Repeat("b", i+1)
+	}
+	return tags
+}
+
+// --- ValidateStatus Tests ---
+
+func TestValidateStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		wantErr error
+	}{
+		{"pending", "pending", nil},
+		{"queued", "queued", nil},
+		{"running", "running", nil},
+		{"completed", "completed", nil},
+		{"failed", "failed", nil},
+		{"cancelled", "cancelled", nil},
+		{"retrying", "retrying", nil},
+		{"empty", "", ErrInvalidStatus},
+		{"invalid", "unknown", ErrInvalidStatus},
+		{"uppercase", "PENDING", ErrInvalidStatus},
+		{"mixed case", "Running", ErrInvalidStatus},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateStatus(tc.status)
+			if tc.wantErr == nil && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("got error %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// --- ValidateBatchInput Tests ---
+
+func TestValidateBatchInput(t *testing.T) {
+	validInput := models.AdvancedBatchInput{
+		FlowID:         "flow-1",
+		URLs:           []string{"https://example.com", "https://example.org"},
+		NamingTemplate: "Task {{index}} - {{domain}}",
+		Priority:       5,
+	}
+
+	tests := []struct {
+		name    string
+		input   models.AdvancedBatchInput
+		wantErr error
+	}{
+		{"valid input", validInput, nil},
+		{"empty urls", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{}, Priority: 5}, ErrEmptyURL},
+		{"valid with flow id", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5}, nil},
+		{"invalid priority", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 99}, ErrInvalidPriority},
+		{"invalid url in list", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com", "not-a-url"}, Priority: 5}, ErrInvalidURL},
+		{"invalid template", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5, NamingTemplate: "{{invalid}}"}, ErrInvalidTemplate},
+		{"valid template with all vars", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5, NamingTemplate: "{{url}} - {{domain}} - {{index}} - {{name}}"}, nil},
+		{"empty template", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5, NamingTemplate: ""}, nil},
+		{"plain text template", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5, NamingTemplate: "Task Name"}, nil},
+		{"tags too many", models.AdvancedBatchInput{FlowID: "f1", URLs: []string{"https://example.com"}, Priority: 5, Tags: make21Tags()}, ErrTooManyTags},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateBatchInput(tc.input)
+			if tc.wantErr == nil && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("got error %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// --- ValidateBatchTemplate Tests ---
+
+func TestValidateBatchTemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     bool
+	}{
+		{"plain text", "Task Name", true},
+		{"empty", "", true},
+		{"valid url", "{{url}}", true},
+		{"valid domain", "{{domain}}", true},
+		{"valid index", "{{index}}", true},
+		{"valid name", "{{name}}", true},
+		{"all valid vars", "{{url}} - {{domain}} - {{index}} - {{name}}", true},
+		{"mixed text and vars", "Task {{index}}: {{domain}}", true},
+		{"invalid var", "{{invalid}}", false},
+		{"unclosed brace", "{{url", false},
+		{"partial invalid", "{{url}} - {{bad}}", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := models.ValidateBatchTemplate(tc.template)
+			if got != tc.want {
+				t.Errorf("ValidateBatchTemplate(%q): got %v, want %v", tc.template, got, tc.want)
+			}
+		})
+	}
+}
+
+// --- ValidateTaskSteps edge cases ---
+
+func TestValidateTaskStepsTabSwitch(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionTabSwitch, Value: "1"},
+	}
+	err := ValidateTaskSteps(steps, false)
+	if err != nil {
+		t.Errorf("tab_switch step should be valid: %v", err)
+	}
+}
+
+func TestValidateTaskStepsMultipleErrors(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: "bogus"},
+	}
+	err := ValidateTaskSteps(steps, false)
+	if !errors.Is(err, ErrInvalidStepAction) {
+		t.Errorf("expected ErrInvalidStepAction, got: %v", err)
+	}
+}
+
+func TestValidateTaskStepsSelectMissingSelector(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionSelect, Value: "option1", Selector: ""},
+	}
+	err := ValidateTaskSteps(steps, false)
+	if !errors.Is(err, ErrStepMissingSelector) {
+		t.Errorf("expected ErrStepMissingSelector for select without selector, got: %v", err)
+	}
+}
+
+func TestValidateBatchInputMissingFlowID(t *testing.T) {
+	input := models.AdvancedBatchInput{
+		FlowID:   "",
+		URLs:     []string{"https://example.com"},
+		Priority: 5,
+	}
+	err := ValidateBatchInput(input)
+	if err == nil {
+		t.Error("expected error for missing flow ID")
+	}
+}
+
+func TestValidateBatchInputWhitespaceFlowID(t *testing.T) {
+	input := models.AdvancedBatchInput{
+		FlowID:   "   ",
+		URLs:     []string{"https://example.com"},
+		Priority: 5,
+	}
+	err := ValidateBatchInput(input)
+	if err == nil {
+		t.Error("expected error for whitespace-only flow ID")
+	}
+}
+
+func TestValidateTaskURLWithQueryParams(t *testing.T) {
+	err := ValidateTaskURL("https://example.com/path?query=value&foo=bar")
+	if err != nil {
+		t.Errorf("URL with query params should be valid: %v", err)
+	}
+}
+
+func TestValidateTaskURLWithFragment(t *testing.T) {
+	err := ValidateTaskURL("https://example.com/path#section")
+	if err != nil {
+		t.Errorf("URL with fragment should be valid: %v", err)
+	}
+}
