@@ -2,8 +2,12 @@ package recorder
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
+	"web-automation/internal/logs"
 	"web-automation/internal/models"
 )
 
@@ -232,5 +236,158 @@ func TestBrowserCtxNilBeforeStart(t *testing.T) {
 	r := New(context.Background(), "flow-ctx", nil)
 	if r.BrowserCtx() != nil {
 		t.Error("BrowserCtx() should return nil before Start")
+	}
+}
+
+func TestNetworkLogsNilLogger(t *testing.T) {
+	r := &Recorder{flowID: "flow-nil-net"}
+	logs := r.NetworkLogs()
+	if logs != nil {
+		t.Errorf("expected nil, got %v", logs)
+	}
+}
+
+func TestNetworkLogsWithLogger(t *testing.T) {
+	r := New(context.Background(), "flow-net", nil)
+	r.netLogger = logs.NewNetworkLogger("flow-net")
+
+	logs := r.NetworkLogs()
+	if logs == nil {
+		t.Fatal("expected non-nil logs slice")
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected empty logs, got %d", len(logs))
+	}
+}
+
+func TestSetSnapshotter(t *testing.T) {
+	r := New(context.Background(), "flow-snap", nil)
+	if r.snapshotter != nil {
+		t.Error("snapshotter should be nil initially")
+	}
+
+	dir := t.TempDir()
+	s, err := NewSnapshotter(dir)
+	if err != nil {
+		t.Fatalf("NewSnapshotter: %v", err)
+	}
+	r.SetSnapshotter(s)
+	if r.snapshotter == nil {
+		t.Error("snapshotter should be set after SetSnapshotter")
+	}
+}
+
+func TestNewSnapshotterCreatesDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "snap")
+	s, err := NewSnapshotter(dir)
+	if err != nil {
+		t.Fatalf("NewSnapshotter: %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected non-nil snapshotter")
+	}
+	if s.outputDir != dir {
+		t.Errorf("outputDir: got %q, want %q", s.outputDir, dir)
+	}
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("expected directory")
+	}
+}
+
+func TestNewSnapshotterInvalidPath(t *testing.T) {
+	_, err := NewSnapshotter("/dev/null/invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}
+
+func TestSanitizeEdgeCases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"abc", "abc"},
+		{"a/b\\c.d\x00e", "a_b_c_d_e"},
+		{"///", "___"},
+		{"no_special-chars_here", "no_special-chars_here"},
+		{"日本語", "日本語"},
+		{"émojis🎉", "émojis🎉"},
+	}
+
+	for _, tc := range tests {
+		got := sanitize(tc.input)
+		if got != tc.want {
+			t.Errorf("sanitize(%q): got %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestRecordStepConcurrent(t *testing.T) {
+	var mu sync.Mutex
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			mu.Lock()
+			captured = append(captured, step)
+			mu.Unlock()
+		},
+		flowID: "flow-concurrent",
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.RecordStep(models.ActionClick, "#btn", "")
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(captured) != 100 {
+		t.Errorf("expected 100 steps, got %d", len(captured))
+	}
+
+	indices := make(map[int]bool)
+	for _, step := range captured {
+		if indices[step.Index] {
+			t.Errorf("duplicate step index: %d", step.Index)
+		}
+		indices[step.Index] = true
+	}
+}
+
+func TestBestSelectorSingleCandidate(t *testing.T) {
+	candidates := []models.SelectorCandidate{
+		{Selector: "#only", Score: 50},
+	}
+	best := BestSelector(candidates)
+	if best != "#only" {
+		t.Errorf("BestSelector single: got %q, want %q", best, "#only")
+	}
+}
+
+func TestRankSelectorsEqualScores(t *testing.T) {
+	candidates := []models.SelectorCandidate{
+		{Selector: "a", Score: 50},
+		{Selector: "b", Score: 50},
+		{Selector: "c", Score: 50},
+	}
+	ranked := RankSelectors(candidates)
+	if len(ranked) != 3 {
+		t.Errorf("expected 3 results, got %d", len(ranked))
+	}
+	for _, r := range ranked {
+		if r.Score != 50 {
+			t.Errorf("unexpected score: %d", r.Score)
+		}
 	}
 }

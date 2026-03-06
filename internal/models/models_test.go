@@ -614,6 +614,39 @@ func TestTaskLifecycleEventFields(t *testing.T) {
 	}
 }
 
+// --- ValidateBatchTemplate Tests ---
+
+func TestValidateBatchTemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     bool
+	}{
+		{"plain text", "Task Name", true},
+		{"empty", "", true},
+		{"valid url", "{{url}}", true},
+		{"valid domain", "{{domain}}", true},
+		{"valid index", "{{index}}", true},
+		{"valid name", "{{name}}", true},
+		{"all valid vars", "{{url}} - {{domain}} - {{index}} - {{name}}", true},
+		{"mixed text and vars", "Task {{index}}: {{domain}}", true},
+		{"invalid var", "{{invalid}}", false},
+		{"unclosed brace", "{{url", false},
+		{"partial invalid", "{{url}} - {{bad}}", false},
+		{"empty var name", "{{}}", false},
+		{"nested braces", "{{{{url}}}}", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidateBatchTemplate(tc.template)
+			if got != tc.want {
+				t.Errorf("ValidateBatchTemplate(%q): got %v, want %v", tc.template, got, tc.want)
+			}
+		})
+	}
+}
+
 // --- Benchmark ---
 
 func BenchmarkClassifyError(b *testing.B) {

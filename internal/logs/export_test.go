@@ -1,15 +1,19 @@
 package logs
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"web-automation/internal/crypto"
+	"web-automation/internal/database"
 	"web-automation/internal/models"
 )
 
@@ -268,6 +272,265 @@ func TestWriteCSVToWriterStepAndNetworkRows(t *testing.T) {
 	}
 	if netRow[14] != "application/json" {
 		t.Errorf("mimeType: got %q, want application/json", netRow[14])
+	}
+}
+
+func TestWriteJSONLEmptyLists(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/empty.jsonl"
+
+	err := writeJSONL(path, []models.StepLog{}, []models.NetworkLog{})
+	if err != nil {
+		t.Fatalf("writeJSONL(empty): %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("expected empty file, got %d bytes", len(data))
+	}
+}
+
+func TestWriteCSVEmptyLists(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/empty.csv"
+
+	err := writeCSV(path, []models.StepLog{}, []models.NetworkLog{})
+	if err != nil {
+		t.Fatalf("writeCSV(empty): %v", err)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open file: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV: %v", err)
+	}
+
+	if len(records) != 1 {
+		t.Errorf("expected 1 row (header only), got %d", len(records))
+	}
+}
+
+func TestWriteCSVMultipleNetworkLogs(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/multi_net.csv"
+
+	networkLogs := []models.NetworkLog{
+		{TaskID: "t1", StepIndex: 0, RequestURL: "https://a.com", Method: "GET", StatusCode: 200, MimeType: "text/html", DurationMs: 100, Timestamp: time.Now()},
+		{TaskID: "t1", StepIndex: 1, RequestURL: "https://b.com", Method: "POST", StatusCode: 201, MimeType: "application/json", Error: "partial error", DurationMs: 200, Timestamp: time.Now()},
+	}
+
+	err := writeCSV(path, nil, networkLogs)
+	if err != nil {
+		t.Fatalf("writeCSV: %v", err)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open file: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV: %v", err)
+	}
+
+	if len(records) != 3 {
+		t.Fatalf("expected 3 rows (header + 2 data), got %d", len(records))
+	}
+	if records[1][0] != "network" {
+		t.Errorf("first data row type: got %q, want network", records[1][0])
+	}
+	if records[2][12] != "POST" {
+		t.Errorf("second data row method: got %q, want POST", records[2][12])
+	}
+}
+
+func setupTestDB(t *testing.T) *database.DB {
+	t.Helper()
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	crypto.ResetForTest()
+	if err := crypto.InitKeyWithBytes(key); err != nil {
+		t.Fatalf("init crypto key: %v", err)
+	}
+	t.Cleanup(func() { crypto.ResetForTest() })
+
+	dir := t.TempDir()
+	db, err := database.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestExportTaskLogs(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	task := models.Task{
+		ID:        "export-task-1",
+		Name:      "Export Test",
+		URL:       "https://example.com",
+		Status:    models.TaskStatusCompleted,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	stepLogs := []models.StepLog{
+		{TaskID: "export-task-1", StepIndex: 0, Action: models.ActionNavigate, Value: "https://example.com", DurationMs: 100, StartedAt: time.Now()},
+	}
+	if err := db.InsertStepLogs("export-task-1", stepLogs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	networkLogs := []models.NetworkLog{
+		{TaskID: "export-task-1", StepIndex: 0, RequestURL: "https://example.com", Method: "GET", StatusCode: 200, DurationMs: 50, Timestamp: time.Now()},
+	}
+	if err := db.InsertNetworkLogs("export-task-1", networkLogs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	jsonlPath, csvPath, err := exporter.ExportTaskLogs("export-task-1")
+	if err != nil {
+		t.Fatalf("ExportTaskLogs: %v", err)
+	}
+
+	if jsonlPath == "" {
+		t.Error("jsonlPath should not be empty")
+	}
+	if csvPath == "" {
+		t.Error("csvPath should not be empty")
+	}
+
+	jsonlData, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		t.Fatalf("read JSONL: %v", err)
+	}
+	if len(jsonlData) == 0 {
+		t.Error("JSONL file should not be empty")
+	}
+
+	csvData, err := os.ReadFile(csvPath)
+	if err != nil {
+		t.Fatalf("read CSV: %v", err)
+	}
+	if len(csvData) == 0 {
+		t.Error("CSV file should not be empty")
+	}
+}
+
+func TestExportTaskLogsNoData(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	jsonlPath, csvPath, err := exporter.ExportTaskLogs("nonexistent")
+	if err != nil {
+		t.Fatalf("ExportTaskLogs: %v", err)
+	}
+
+	if jsonlPath == "" || csvPath == "" {
+		t.Error("paths should not be empty even for no data")
+	}
+}
+
+func TestExportBatchLogs(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	for i := 0; i < 2; i++ {
+		task := models.Task{
+			ID:        "batch-export-" + string(rune('0'+i)),
+			Name:      "Batch Export Task",
+			URL:       "https://example.com",
+			Status:    models.TaskStatusCompleted,
+			BatchID:   "batch-export-1",
+			CreatedAt: time.Now(),
+		}
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+
+		stepLogs := []models.StepLog{
+			{TaskID: task.ID, StepIndex: 0, Action: models.ActionClick, Selector: "#btn", DurationMs: 50, StartedAt: time.Now()},
+		}
+		if err := db.InsertStepLogs(task.ID, stepLogs); err != nil {
+			t.Fatalf("InsertStepLogs %d: %v", i, err)
+		}
+	}
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	zipPath, err := exporter.ExportBatchLogs("batch-export-1")
+	if err != nil {
+		t.Fatalf("ExportBatchLogs: %v", err)
+	}
+
+	if zipPath == "" {
+		t.Error("zipPath should not be empty")
+	}
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 4 {
+		t.Errorf("expected 4 files in zip (2 JSONL + 2 CSV), got %d", len(r.File))
+	}
+}
+
+func TestExportBatchLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	zipPath, err := exporter.ExportBatchLogs("nonexistent-batch")
+	if err != nil {
+		t.Fatalf("ExportBatchLogs: %v", err)
+	}
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 0 {
+		t.Errorf("expected 0 files in zip for empty batch, got %d", len(r.File))
 	}
 }
 

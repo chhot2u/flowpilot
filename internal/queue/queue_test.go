@@ -573,3 +573,466 @@ func TestMetricsAfterStop(t *testing.T) {
 		t.Errorf("Pending after Stop: got %d, want 0", m.Pending)
 	}
 }
+
+func TestSubmitDuplicateRunning(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task := makeTestTask("dup-run-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.mu.Lock()
+	q.running[task.ID] = func() {}
+	q.mu.Unlock()
+
+	err := q.Submit(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error for duplicate running task")
+	}
+	if got := err.Error(); got != fmt.Sprintf("task %s is already running", task.ID) {
+		t.Errorf("error message: got %q", got)
+	}
+}
+
+func TestSubmitDuplicatePending(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task := makeTestTask("dup-pend-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.mu.Lock()
+	q.pending[task.ID] = func() {}
+	q.mu.Unlock()
+
+	err := q.Submit(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error for duplicate pending task")
+	}
+	if got := err.Error(); got != fmt.Sprintf("task %s is already pending", task.ID) {
+		t.Errorf("error message: got %q", got)
+	}
+}
+
+func TestSubmitErrQueueFull(t *testing.T) {
+	q, _ := setupTestQueue(t, 1, nil, nil)
+	defer q.Stop()
+
+	q.maxPending = 2
+
+	q.mu.Lock()
+	q.pending["fill-1"] = func() {}
+	q.pending["fill-2"] = func() {}
+	q.mu.Unlock()
+
+	task := makeTestTask("overflow-1")
+	err := q.Submit(context.Background(), task)
+	if !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("expected ErrQueueFull, got %v", err)
+	}
+}
+
+func TestCancelNonExistentTask(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task := makeTestTask("cancel-nonexist-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if err := q.Cancel("cancel-nonexist-1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	got, err := db.GetTask("cancel-nonexist-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != models.TaskStatusCancelled {
+		t.Errorf("status: got %q, want %q", got.Status, models.TaskStatusCancelled)
+	}
+}
+
+func TestCancelPendingTask(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("cancel-pend-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	cancelCalled := false
+	q.mu.Lock()
+	q.pending[task.ID] = func() { cancelCalled = true }
+	q.mu.Unlock()
+
+	if err := q.Cancel(task.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	if !cancelCalled {
+		t.Error("pending task cancel function should have been called")
+	}
+
+	q.mu.Lock()
+	_, inPending := q.pending[task.ID]
+	wasCancelled := q.cancelled[task.ID]
+	q.mu.Unlock()
+
+	if inPending {
+		t.Error("task should be removed from pending map")
+	}
+	if !wasCancelled {
+		t.Error("task should be marked as cancelled")
+	}
+
+	mu.Lock()
+	foundCancelledEvent := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusCancelled {
+			foundCancelledEvent = true
+		}
+	}
+	mu.Unlock()
+
+	if !foundCancelledEvent {
+		t.Error("expected cancelled event to be emitted")
+	}
+}
+
+func TestSubmitBatchStopsOnError(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task1 := makeTestTask("batch-err-1")
+	task2 := makeTestTask("batch-err-2")
+	if err := db.CreateTask(task1); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.CreateTask(task2); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if err := q.Submit(context.Background(), task1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	tasks := []models.Task{task1, task2}
+	err := q.SubmitBatch(context.Background(), tasks)
+	if err == nil {
+		t.Fatal("expected error from SubmitBatch when duplicate task submitted")
+	}
+}
+
+func TestGetProxyManager(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	if q.getProxyManager() != nil {
+		t.Error("expected nil proxy manager initially")
+	}
+
+	config := models.ProxyPoolConfig{
+		Strategy: models.RotationRoundRobin,
+	}
+	pm := proxy.NewManager(db, config)
+	defer pm.Stop()
+
+	q.SetProxyManager(pm)
+	if q.getProxyManager() == nil {
+		t.Error("expected non-nil proxy manager after SetProxyManager")
+	}
+}
+
+func TestHandleFailureMaxRetriesExceeded(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("fail-max-1")
+	task.RetryCount = 2
+	task.MaxRetries = 2
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.handleFailure(context.Background(), task, fmt.Errorf("exec failed"))
+
+	got, err := db.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != models.TaskStatusFailed {
+		t.Errorf("status: got %q, want %q", got.Status, models.TaskStatusFailed)
+	}
+
+	mu.Lock()
+	foundFailed := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusFailed {
+			foundFailed = true
+		}
+	}
+	mu.Unlock()
+	if !foundFailed {
+		t.Error("expected failed event to be emitted")
+	}
+
+	m := q.Metrics()
+	if m.TotalFailed < 1 {
+		t.Errorf("TotalFailed: got %d, want >= 1", m.TotalFailed)
+	}
+}
+
+func TestHandleFailureRetriesWithBackoff(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("fail-retry-1")
+	task.RetryCount = 0
+	task.MaxRetries = 3
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	go q.handleFailure(context.Background(), task, fmt.Errorf("temporary error"))
+
+	time.Sleep(2 * time.Second)
+
+	mu.Lock()
+	foundRetrying := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusRetrying {
+			foundRetrying = true
+		}
+	}
+	mu.Unlock()
+
+	if !foundRetrying {
+		t.Error("expected retrying event to be emitted")
+	}
+}
+
+func TestHandleFailureRetryStoppedByQueueStop(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+
+	task := makeTestTask("fail-stop-1")
+	task.RetryCount = 0
+	task.MaxRetries = 3
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		q.handleFailure(context.Background(), task, fmt.Errorf("temporary error"))
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	q.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handleFailure did not return after queue stop")
+	}
+
+	got, err := db.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != models.TaskStatusCancelled {
+		t.Errorf("status: got %q, want %q", got.Status, models.TaskStatusCancelled)
+	}
+}
+
+func TestHandleFailureRetryStoppedByContextCancel(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("fail-ctx-1")
+	task.RetryCount = 0
+	task.MaxRetries = 3
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		q.handleFailure(ctx, task, fmt.Errorf("temporary error"))
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handleFailure did not return after context cancel")
+	}
+
+	got, err := db.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != models.TaskStatusCancelled {
+		t.Errorf("status: got %q, want %q", got.Status, models.TaskStatusCancelled)
+	}
+}
+
+func TestStopClearsPendingTasks(t *testing.T) {
+	q, _ := setupTestQueue(t, 10, nil, nil)
+
+	pendingCancel1Done := make(chan struct{})
+	pendingCancel2Done := make(chan struct{})
+	q.mu.Lock()
+	q.pending["pend-1"] = func() { close(pendingCancel1Done) }
+	q.pending["pend-2"] = func() { close(pendingCancel2Done) }
+	q.mu.Unlock()
+
+	q.Stop()
+
+	select {
+	case <-pendingCancel1Done:
+	case <-time.After(time.Second):
+		t.Error("cancel for pending pend-1 was not called")
+	}
+	select {
+	case <-pendingCancel2Done:
+	case <-time.After(time.Second):
+		t.Error("cancel for pending pend-2 was not called")
+	}
+
+	q.mu.Lock()
+	pendingCount := len(q.pending)
+	q.mu.Unlock()
+	if pendingCount != 0 {
+		t.Errorf("pending count after Stop: got %d, want 0", pendingCount)
+	}
+}
+
+func TestExecuteTaskCancelledBeforeAcquire(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("exec-cancel-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.mu.Lock()
+	q.cancelled[task.ID] = true
+	q.pending[task.ID] = func() {}
+	q.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	q.executeTask(ctx, task)
+
+	mu.Lock()
+	foundFailed := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusFailed {
+			foundFailed = true
+		}
+	}
+	mu.Unlock()
+
+	if foundFailed {
+		t.Error("cancelled task should not emit failed event")
+	}
+}
+
+func TestExecuteTaskStoppedBeforeRun(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+
+	task := makeTestTask("exec-stopped-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.mu.Lock()
+	q.pending[task.ID] = func() {}
+	q.mu.Unlock()
+
+	q.Stop()
+
+	q.executeTask(context.Background(), task)
+}
+
+func TestMetricsTotalCompletedAfterHandleSuccess(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task := makeTestTask("metrics-complete-1")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	result := &models.TaskResult{
+		TaskID:  task.ID,
+		Success: true,
+	}
+	q.handleSuccess(task, result)
+
+	m := q.Metrics()
+	if m.TotalCompleted != 1 {
+		t.Errorf("TotalCompleted: got %d, want 1", m.TotalCompleted)
+	}
+}
+
+func TestMetricsTotalFailedAfterHandleFailure(t *testing.T) {
+	q, db := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	task := makeTestTask("metrics-fail-1")
+	task.RetryCount = 5
+	task.MaxRetries = 5
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	q.handleFailure(context.Background(), task, fmt.Errorf("terminal failure"))
+
+	m := q.Metrics()
+	if m.TotalFailed != 1 {
+		t.Errorf("TotalFailed: got %d, want 1", m.TotalFailed)
+	}
+}
+
+func TestSubmitBatchEmpty(t *testing.T) {
+	q, _ := setupTestQueue(t, 10, nil, nil)
+	defer q.Stop()
+
+	err := q.SubmitBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SubmitBatch(nil): %v", err)
+	}
+
+	err = q.SubmitBatch(context.Background(), []models.Task{})
+	if err != nil {
+		t.Fatalf("SubmitBatch(empty): %v", err)
+	}
+}

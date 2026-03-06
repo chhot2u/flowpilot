@@ -1537,6 +1537,427 @@ func TestTaskHeadlessField(t *testing.T) {
 
 // --- PurgeOldRecords comprehensive test ---
 
+// --- UpdateTask on Failed Task (allowed) ---
+
+func TestUpdateTaskOnFailedTask(t *testing.T) {
+	db := setupTestDB(t)
+	task := makeTask("upd-failed-1", "Failed Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTaskStatus("upd-failed-1", models.TaskStatusFailed, "some error"); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+
+	err := db.UpdateTask("upd-failed-1", "Retried", "https://example.com", []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+	}, models.ProxyConfig{}, models.PriorityNormal, nil)
+	if err != nil {
+		t.Fatalf("UpdateTask on failed task should succeed: %v", err)
+	}
+
+	got, err := db.GetTask("upd-failed-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Name != "Retried" {
+		t.Errorf("Name: got %q, want %q", got.Name, "Retried")
+	}
+}
+
+// --- GetTaskStats empty ---
+
+func TestGetTaskStatsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	stats, err := db.GetTaskStats()
+	if err != nil {
+		t.Fatalf("GetTaskStats: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Errorf("expected empty stats, got %v", stats)
+	}
+}
+
+// --- Create and Get RecordedFlow with empty steps ---
+
+func TestCreateRecordedFlowEmptySteps(t *testing.T) {
+	db := setupTestDB(t)
+	flow := models.RecordedFlow{
+		ID:        "flow-empty-steps",
+		Name:      "Empty Steps Flow",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	got, err := db.GetRecordedFlow("flow-empty-steps")
+	if err != nil {
+		t.Fatalf("GetRecordedFlow: %v", err)
+	}
+	if got.Steps != nil && len(got.Steps) != 0 {
+		t.Errorf("Steps should be nil or empty, got %v", got.Steps)
+	}
+}
+
+// --- Close idempotent ---
+
+func TestCloseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	crypto.ResetForTest()
+	if err := crypto.InitKeyWithBytes(key); err != nil {
+		t.Fatalf("init crypto: %v", err)
+	}
+
+	db, err := New(filepath.Join(dir, "close-test.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	crypto.ResetForTest()
+}
+
+// --- CreateTask with empty proxy ---
+
+func TestCreateTaskWithEmptyProxy(t *testing.T) {
+	db := setupTestDB(t)
+	task := models.Task{
+		ID:        "empty-proxy",
+		Name:      "Empty Proxy",
+		URL:       "https://example.com",
+		Status:    models.TaskStatusPending,
+		CreatedAt: time.Now(),
+	}
+
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got, err := db.GetTask("empty-proxy")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Proxy.Server != "" {
+		t.Errorf("Proxy.Server should be empty, got %q", got.Proxy.Server)
+	}
+	if got.Proxy.Username != "" {
+		t.Errorf("Proxy.Username should be empty, got %q", got.Proxy.Username)
+	}
+}
+
+// --- BatchProgress with all statuses ---
+
+func TestBatchProgressAllStatuses(t *testing.T) {
+	db := setupTestDB(t)
+
+	statuses := []models.TaskStatus{
+		models.TaskStatusPending,
+		models.TaskStatusQueued,
+		models.TaskStatusRunning,
+		models.TaskStatusCompleted,
+		models.TaskStatusFailed,
+		models.TaskStatusCancelled,
+		models.TaskStatusRetrying,
+	}
+
+	for i, status := range statuses {
+		task := makeTask(fmt.Sprintf("bp-all-%d", i), fmt.Sprintf("Task %d", i))
+		task.BatchID = "batch-all-statuses"
+		task.Status = status
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+	}
+
+	progress, err := db.GetBatchProgress("batch-all-statuses")
+	if err != nil {
+		t.Fatalf("GetBatchProgress: %v", err)
+	}
+
+	if progress.Total != 7 {
+		t.Errorf("Total: got %d, want 7", progress.Total)
+	}
+	if progress.Pending != 1 {
+		t.Errorf("Pending: got %d, want 1", progress.Pending)
+	}
+	if progress.Queued != 1 {
+		t.Errorf("Queued: got %d, want 1", progress.Queued)
+	}
+	if progress.Running != 1 {
+		t.Errorf("Running: got %d, want 1", progress.Running)
+	}
+	if progress.Completed != 1 {
+		t.Errorf("Completed: got %d, want 1", progress.Completed)
+	}
+	if progress.Failed != 1 {
+		t.Errorf("Failed: got %d, want 1", progress.Failed)
+	}
+	if progress.Cancelled != 1 {
+		t.Errorf("Cancelled: got %d, want 1", progress.Cancelled)
+	}
+}
+
+// --- CreateTask with result ---
+
+func TestCreateAndGetTaskWithResult(t *testing.T) {
+	db := setupTestDB(t)
+	task := makeTask("result-round-trip", "Result Test")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	result := models.TaskResult{
+		TaskID:  task.ID,
+		Success: true,
+		ExtractedData: map[string]string{
+			"title": "Test Page",
+			"h1":    "Welcome",
+		},
+		Screenshots: []string{"/tmp/s1.png", "/tmp/s2.png"},
+		Duration:    3 * time.Second,
+	}
+
+	if err := db.UpdateTaskResult(task.ID, result); err != nil {
+		t.Fatalf("UpdateTaskResult: %v", err)
+	}
+
+	got, err := db.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Result == nil {
+		t.Fatal("Result should be set")
+	}
+	if len(got.Result.ExtractedData) != 2 {
+		t.Errorf("ExtractedData count: got %d, want 2", len(got.Result.ExtractedData))
+	}
+	if len(got.Result.Screenshots) != 2 {
+		t.Errorf("Screenshots count: got %d, want 2", len(got.Result.Screenshots))
+	}
+}
+
+// --- ListTasks empty ---
+
+func TestListTasksEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	tasks, err := db.ListTasks()
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if tasks != nil && len(tasks) != 0 {
+		t.Errorf("expected no tasks, got %d", len(tasks))
+	}
+}
+
+// --- CreateProxy with credentials ---
+
+func TestCreateProxyWithCredentials(t *testing.T) {
+	db := setupTestDB(t)
+	p := models.Proxy{
+		ID:        "cred-proxy",
+		Server:    "cred.proxy.com:8080",
+		Protocol:  models.ProxyHTTPS,
+		Username:  "admin",
+		Password:  "secret123",
+		Geo:       "DE",
+		Status:    models.ProxyStatusUnknown,
+		CreatedAt: time.Now(),
+	}
+
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	proxies, err := db.ListProxies()
+	if err != nil {
+		t.Fatalf("ListProxies: %v", err)
+	}
+
+	var found *models.Proxy
+	for i := range proxies {
+		if proxies[i].ID == "cred-proxy" {
+			found = &proxies[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("proxy not found")
+	}
+	if found.Username != "admin" {
+		t.Errorf("Username: got %q, want admin", found.Username)
+	}
+	if found.Password != "secret123" {
+		t.Errorf("Password: got %q, want secret123", found.Password)
+	}
+	if found.Protocol != models.ProxyHTTPS {
+		t.Errorf("Protocol: got %q, want %q", found.Protocol, models.ProxyHTTPS)
+	}
+	if found.Geo != "DE" {
+		t.Errorf("Geo: got %q, want DE", found.Geo)
+	}
+}
+
+// --- CreateProxy no credentials ---
+
+func TestCreateProxyWithoutCredentials(t *testing.T) {
+	db := setupTestDB(t)
+	p := models.Proxy{
+		ID:        "no-cred-proxy",
+		Server:    "nocred.proxy.com:3128",
+		Protocol:  models.ProxySOCKS5,
+		Status:    models.ProxyStatusUnknown,
+		CreatedAt: time.Now(),
+	}
+
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	proxies, err := db.ListProxies()
+	if err != nil {
+		t.Fatalf("ListProxies: %v", err)
+	}
+
+	for _, px := range proxies {
+		if px.ID == "no-cred-proxy" {
+			if px.Username != "" {
+				t.Errorf("Username should be empty, got %q", px.Username)
+			}
+			if px.Password != "" {
+				t.Errorf("Password should be empty, got %q", px.Password)
+			}
+			return
+		}
+	}
+	t.Error("proxy not found")
+}
+
+// --- Multiple step log inserts ---
+
+func TestInsertStepLogsMultiple(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("sl-multi-1", "Step Log Multi Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := make([]models.StepLog, 10)
+	for i := range logs {
+		logs[i] = models.StepLog{
+			TaskID:     "sl-multi-1",
+			StepIndex:  i,
+			Action:     models.ActionClick,
+			Selector:   "#btn",
+			SnapshotID: fmt.Sprintf("snap-%d", i),
+			DurationMs: int64(i * 10),
+			StartedAt:  time.Now(),
+		}
+	}
+
+	if err := db.InsertStepLogs("sl-multi-1", logs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	got, err := db.ListStepLogs("sl-multi-1")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(got) != 10 {
+		t.Errorf("expected 10 step logs, got %d", len(got))
+	}
+
+	for i, log := range got {
+		if log.StepIndex != i {
+			t.Errorf("log[%d].StepIndex: got %d, want %d", i, log.StepIndex, i)
+		}
+	}
+}
+
+// --- Multiple network log inserts ---
+
+func TestInsertNetworkLogsMultiple(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("nl-multi-1", "Network Log Multi Task")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := make([]models.NetworkLog, 5)
+	for i := range logs {
+		logs[i] = models.NetworkLog{
+			TaskID:          "nl-multi-1",
+			StepIndex:       i,
+			RequestURL:      fmt.Sprintf("https://example.com/page%d", i),
+			Method:          "GET",
+			StatusCode:      200,
+			MimeType:        "text/html",
+			RequestHeaders:  `{"Accept":"text/html"}`,
+			ResponseHeaders: `{"Content-Type":"text/html"}`,
+			RequestSize:     100,
+			ResponseSize:    int64(i * 500),
+			DurationMs:      int64(i * 50),
+			Timestamp:       time.Now(),
+		}
+	}
+
+	if err := db.InsertNetworkLogs("nl-multi-1", logs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	got, err := db.ListNetworkLogs("nl-multi-1")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(got) != 5 {
+		t.Errorf("expected 5 network logs, got %d", len(got))
+	}
+
+	for i, log := range got {
+		if log.RequestURL != fmt.Sprintf("https://example.com/page%d", i) {
+			t.Errorf("log[%d].RequestURL: got %q", i, log.RequestURL)
+		}
+		if log.RequestHeaders != `{"Accept":"text/html"}` {
+			t.Errorf("log[%d].RequestHeaders: got %q", i, log.RequestHeaders)
+		}
+	}
+}
+
+// --- Task with FlowID and BatchID ---
+
+func TestTaskWithFlowAndBatchIDs(t *testing.T) {
+	db := setupTestDB(t)
+	task := makeTask("fb-1", "Flow Batch Task")
+	task.FlowID = "flow-123"
+	task.BatchID = "batch-456"
+
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got, err := db.GetTask("fb-1")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.FlowID != "flow-123" {
+		t.Errorf("FlowID: got %q, want %q", got.FlowID, "flow-123")
+	}
+	if got.BatchID != "batch-456" {
+		t.Errorf("BatchID: got %q, want %q", got.BatchID, "batch-456")
+	}
+}
+
 func TestPurgeOldRecordsWithOldData(t *testing.T) {
 	db := setupTestDB(t)
 

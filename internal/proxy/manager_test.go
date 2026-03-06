@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,6 +43,21 @@ func setupTestManager(t *testing.T, strategy models.RotationStrategy) (*Manager,
 	m := NewManager(db, config)
 	t.Cleanup(func() { m.Stop() })
 	return m, db
+}
+
+func getProxy(t *testing.T, db *database.DB, id string) models.Proxy {
+	t.Helper()
+	proxies, err := db.ListProxies()
+	if err != nil {
+		t.Fatalf("ListProxies: %v", err)
+	}
+	for _, p := range proxies {
+		if p.ID == id {
+			return p
+		}
+	}
+	t.Fatalf("proxy %s not found", id)
+	return models.Proxy{}
 }
 
 func addHealthyProxy(t *testing.T, db *database.DB, id, server, geo string, latency, totalUsed int) {
@@ -500,5 +518,218 @@ func TestSelectLowestLatencyAllZero(t *testing.T) {
 	p := m.selectLowestLatency(proxies)
 	if p.ID != "a" {
 		t.Errorf("lowest-latency all-zero: got %s, want a (first)", p.ID)
+	}
+}
+
+func TestCheckProxyHealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"origin":"1.2.3.4"}`))
+	}))
+	defer srv.Close()
+
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = srv.URL
+
+	p := models.Proxy{
+		ID:        "hc-healthy-1",
+		Server:    srv.Listener.Addr().String(),
+		Protocol:  models.ProxyHTTP,
+		Status:    models.ProxyStatusUnhealthy,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	m.checkProxy(context.Background(), p)
+
+	got := getProxy(t, db, "hc-healthy-1")
+	if got.Status != models.ProxyStatusHealthy {
+		t.Errorf("status after healthy check: got %q, want %q", got.Status, models.ProxyStatusHealthy)
+	}
+	if got.Latency < 0 {
+		t.Errorf("latency should be >= 0 after health check, got %d", got.Latency)
+	}
+}
+
+func TestCheckProxyUnhealthyBadStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = srv.URL
+
+	p := models.Proxy{
+		ID:        "hc-bad-status-1",
+		Server:    srv.Listener.Addr().String(),
+		Protocol:  models.ProxyHTTP,
+		Status:    models.ProxyStatusHealthy,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	m.checkProxy(context.Background(), p)
+
+	got := getProxy(t, db, "hc-bad-status-1")
+	if got.Status != models.ProxyStatusUnhealthy {
+		t.Errorf("status after bad status check: got %q, want %q", got.Status, models.ProxyStatusUnhealthy)
+	}
+}
+
+func TestCheckProxyUnhealthyConnectionRefused(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = "http://127.0.0.1:1"
+
+	p := models.Proxy{
+		ID:        "hc-connrefused-1",
+		Server:    "127.0.0.1:1",
+		Protocol:  models.ProxyHTTP,
+		Status:    models.ProxyStatusHealthy,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	m.checkProxy(context.Background(), p)
+
+	got := getProxy(t, db, "hc-connrefused-1")
+	if got.Status != models.ProxyStatusUnhealthy {
+		t.Errorf("status after connection refused: got %q, want %q", got.Status, models.ProxyStatusUnhealthy)
+	}
+}
+
+func TestCheckProxyWithAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"origin":"1.2.3.4"}`))
+	}))
+	defer srv.Close()
+
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = srv.URL
+
+	p := models.Proxy{
+		ID:        "hc-auth-1",
+		Server:    srv.Listener.Addr().String(),
+		Protocol:  models.ProxyHTTP,
+		Username:  "testuser",
+		Password:  "testpass",
+		Status:    models.ProxyStatusUnhealthy,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	m.checkProxy(context.Background(), p)
+
+	got := getProxy(t, db, "hc-auth-1")
+	if got.Latency < 0 {
+		t.Errorf("latency should be >= 0, got %d", got.Latency)
+	}
+}
+
+func TestCheckProxyCancelledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = srv.URL
+
+	p := models.Proxy{
+		ID:        "hc-ctx-cancel-1",
+		Server:    srv.Listener.Addr().String(),
+		Protocol:  models.ProxyHTTP,
+		Status:    models.ProxyStatusHealthy,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateProxy(p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	m.checkProxy(ctx, p)
+
+	got := getProxy(t, db, "hc-ctx-cancel-1")
+	if got.Status != models.ProxyStatusUnhealthy {
+		t.Errorf("status after cancelled context: got %q, want %q", got.Status, models.ProxyStatusUnhealthy)
+	}
+}
+
+func TestCheckAllWithProxies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"origin":"1.2.3.4"}`))
+	}))
+	defer srv.Close()
+
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	m.config.HealthCheckURL = srv.URL
+
+	for i := 0; i < 3; i++ {
+		p := models.Proxy{
+			ID:        fmt.Sprintf("checkall-%d", i),
+			Server:    srv.Listener.Addr().String(),
+			Protocol:  models.ProxyHTTP,
+			Status:    models.ProxyStatusUnhealthy,
+			CreatedAt: time.Now(),
+		}
+		if err := db.CreateProxy(p); err != nil {
+			t.Fatalf("CreateProxy %d: %v", i, err)
+		}
+	}
+
+	m.checkAll(context.Background())
+
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("checkall-%d", i)
+		got := getProxy(t, db, id)
+		if got.Status != models.ProxyStatusHealthy {
+			t.Errorf("proxy %s status: got %q, want %q", id, got.Status, models.ProxyStatusHealthy)
+		}
+	}
+}
+
+func TestCheckAllEmptyPool(t *testing.T) {
+	m, _ := setupTestManager(t, models.RotationRoundRobin)
+	m.checkAll(context.Background())
+}
+
+func TestNewManagerCustomConfig(t *testing.T) {
+	dir := t.TempDir()
+	db, err := database.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	defer db.Close()
+
+	config := models.ProxyPoolConfig{
+		HealthCheckURL:      "http://custom.example.com/health",
+		HealthCheckInterval: 600,
+		MaxFailures:         10,
+		Strategy:            models.RotationLeastUsed,
+	}
+	m := NewManager(db, config)
+	defer m.Stop()
+
+	if m.config.HealthCheckURL != "http://custom.example.com/health" {
+		t.Errorf("HealthCheckURL: got %q, want custom", m.config.HealthCheckURL)
+	}
+	if m.config.HealthCheckInterval != 600 {
+		t.Errorf("HealthCheckInterval: got %d, want 600", m.config.HealthCheckInterval)
+	}
+	if m.config.MaxFailures != 10 {
+		t.Errorf("MaxFailures: got %d, want 10", m.config.MaxFailures)
 	}
 }
