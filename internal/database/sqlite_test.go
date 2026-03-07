@@ -2019,3 +2019,685 @@ func TestPurgeOldRecordsWithOldData(t *testing.T) {
 		t.Errorf("events should be purged, got %d", len(events))
 	}
 }
+
+// --- WebSocket Logs CRUD Tests ---
+
+func TestInsertAndListWebSocketLogs(t *testing.T) {
+	db := setupTestDB(t)
+
+	logs := []models.WebSocketLog{
+		{
+			FlowID:         "flow-ws-1",
+			StepIndex:      0,
+			RequestID:      "ws-req-1",
+			URL:            "wss://example.com/ws",
+			EventType:      models.WSEventCreated,
+			Direction:      "",
+			Opcode:         0,
+			PayloadSize:    0,
+			PayloadSnippet: "",
+			CloseCode:      0,
+			CloseReason:    "",
+			ErrorMessage:   "",
+			Timestamp:      time.Now().Truncate(time.Second),
+		},
+		{
+			FlowID:         "flow-ws-1",
+			StepIndex:      0,
+			RequestID:      "ws-req-1",
+			URL:            "wss://example.com/ws",
+			EventType:      models.WSEventHandshake,
+			Direction:      "",
+			Opcode:         0,
+			PayloadSize:    0,
+			PayloadSnippet: "",
+			Timestamp:      time.Now().Truncate(time.Second),
+		},
+		{
+			FlowID:         "flow-ws-1",
+			StepIndex:      1,
+			RequestID:      "ws-req-1",
+			URL:            "wss://example.com/ws",
+			EventType:      models.WSEventFrameSent,
+			Direction:      "send",
+			Opcode:         1,
+			PayloadSize:    12,
+			PayloadSnippet: "hello server",
+			Timestamp:      time.Now().Truncate(time.Second),
+		},
+		{
+			FlowID:         "flow-ws-1",
+			StepIndex:      1,
+			RequestID:      "ws-req-1",
+			URL:            "wss://example.com/ws",
+			EventType:      models.WSEventFrameReceived,
+			Direction:      "receive",
+			Opcode:         1,
+			PayloadSize:    11,
+			PayloadSnippet: "hello back",
+			Timestamp:      time.Now().Truncate(time.Second),
+		},
+		{
+			FlowID:      "flow-ws-1",
+			StepIndex:   2,
+			RequestID:   "ws-req-1",
+			URL:         "wss://example.com/ws",
+			EventType:   models.WSEventClosed,
+			CloseCode:   1000,
+			CloseReason: "normal closure",
+			Timestamp:   time.Now().Truncate(time.Second),
+		},
+	}
+
+	if err := db.InsertWebSocketLogs("flow-ws-1", logs); err != nil {
+		t.Fatalf("InsertWebSocketLogs: %v", err)
+	}
+
+	got, err := db.ListWebSocketLogs("flow-ws-1")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 websocket logs, got %d", len(got))
+	}
+
+	if got[0].FlowID != "flow-ws-1" {
+		t.Errorf("log[0].FlowID: got %q", got[0].FlowID)
+	}
+	if got[0].EventType != models.WSEventCreated {
+		t.Errorf("log[0].EventType: got %q, want %q", got[0].EventType, models.WSEventCreated)
+	}
+	if got[0].URL != "wss://example.com/ws" {
+		t.Errorf("log[0].URL: got %q", got[0].URL)
+	}
+	if got[0].RequestID != "ws-req-1" {
+		t.Errorf("log[0].RequestID: got %q", got[0].RequestID)
+	}
+
+	if got[2].Direction != "send" {
+		t.Errorf("log[2].Direction: got %q, want send", got[2].Direction)
+	}
+	if got[2].Opcode != 1 {
+		t.Errorf("log[2].Opcode: got %d, want 1", got[2].Opcode)
+	}
+	if got[2].PayloadSize != 12 {
+		t.Errorf("log[2].PayloadSize: got %d, want 12", got[2].PayloadSize)
+	}
+	if got[2].PayloadSnippet != "hello server" {
+		t.Errorf("log[2].PayloadSnippet: got %q", got[2].PayloadSnippet)
+	}
+
+	if got[3].Direction != "receive" {
+		t.Errorf("log[3].Direction: got %q, want receive", got[3].Direction)
+	}
+
+	if got[4].CloseCode != 1000 {
+		t.Errorf("log[4].CloseCode: got %d, want 1000", got[4].CloseCode)
+	}
+	if got[4].CloseReason != "normal closure" {
+		t.Errorf("log[4].CloseReason: got %q", got[4].CloseReason)
+	}
+}
+
+func TestInsertWebSocketLogsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	if err := db.InsertWebSocketLogs("flow-ws-empty", nil); err != nil {
+		t.Fatalf("InsertWebSocketLogs(nil): %v", err)
+	}
+	if err := db.InsertWebSocketLogs("flow-ws-empty", []models.WebSocketLog{}); err != nil {
+		t.Fatalf("InsertWebSocketLogs(empty): %v", err)
+	}
+}
+
+func TestListWebSocketLogsNoResults(t *testing.T) {
+	db := setupTestDB(t)
+
+	got, err := db.ListWebSocketLogs("nonexistent-flow")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 results, got %d", len(got))
+	}
+}
+
+func TestInsertWebSocketLogsErrorEvent(t *testing.T) {
+	db := setupTestDB(t)
+
+	logs := []models.WebSocketLog{
+		{
+			FlowID:       "flow-ws-err",
+			StepIndex:    0,
+			RequestID:    "ws-err-1",
+			URL:          "wss://example.com/ws",
+			EventType:    models.WSEventError,
+			ErrorMessage: "connection reset by peer",
+			Timestamp:    time.Now().Truncate(time.Second),
+		},
+	}
+
+	if err := db.InsertWebSocketLogs("flow-ws-err", logs); err != nil {
+		t.Fatalf("InsertWebSocketLogs: %v", err)
+	}
+
+	got, err := db.ListWebSocketLogs("flow-ws-err")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(got))
+	}
+	if got[0].ErrorMessage != "connection reset by peer" {
+		t.Errorf("ErrorMessage: got %q", got[0].ErrorMessage)
+	}
+	if got[0].EventType != models.WSEventError {
+		t.Errorf("EventType: got %q, want %q", got[0].EventType, models.WSEventError)
+	}
+}
+
+func TestWebSocketLogsIsolatedByFlowID(t *testing.T) {
+	db := setupTestDB(t)
+
+	logs1 := []models.WebSocketLog{
+		{FlowID: "flow-a", StepIndex: 0, RequestID: "r1", EventType: models.WSEventCreated, Timestamp: time.Now()},
+	}
+	logs2 := []models.WebSocketLog{
+		{FlowID: "flow-b", StepIndex: 0, RequestID: "r2", EventType: models.WSEventCreated, Timestamp: time.Now()},
+		{FlowID: "flow-b", StepIndex: 1, RequestID: "r2", EventType: models.WSEventClosed, Timestamp: time.Now()},
+	}
+
+	if err := db.InsertWebSocketLogs("flow-a", logs1); err != nil {
+		t.Fatalf("InsertWebSocketLogs flow-a: %v", err)
+	}
+	if err := db.InsertWebSocketLogs("flow-b", logs2); err != nil {
+		t.Fatalf("InsertWebSocketLogs flow-b: %v", err)
+	}
+
+	gotA, err := db.ListWebSocketLogs("flow-a")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs flow-a: %v", err)
+	}
+	if len(gotA) != 1 {
+		t.Errorf("flow-a: expected 1 log, got %d", len(gotA))
+	}
+
+	gotB, err := db.ListWebSocketLogs("flow-b")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs flow-b: %v", err)
+	}
+	if len(gotB) != 2 {
+		t.Errorf("flow-b: expected 2 logs, got %d", len(gotB))
+	}
+}
+
+// --- Additional Insert/List edge case tests ---
+
+func TestInsertStepLogsEmptySlice(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.InsertStepLogs("task-empty-steps", nil); err != nil {
+		t.Fatalf("InsertStepLogs(nil): %v", err)
+	}
+	if err := db.InsertStepLogs("task-empty-steps", []models.StepLog{}); err != nil {
+		t.Fatalf("InsertStepLogs(empty): %v", err)
+	}
+}
+
+func TestInsertNetworkLogsEmptySlice(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.InsertNetworkLogs("task-empty-net", nil); err != nil {
+		t.Fatalf("InsertNetworkLogs(nil): %v", err)
+	}
+	if err := db.InsertNetworkLogs("task-empty-net", []models.NetworkLog{}); err != nil {
+		t.Fatalf("InsertNetworkLogs(empty): %v", err)
+	}
+}
+
+func TestListStepLogsNoResults(t *testing.T) {
+	db := setupTestDB(t)
+	logs, err := db.ListStepLogs("nonexistent-task")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0, got %d", len(logs))
+	}
+}
+
+func TestListNetworkLogsNoResults(t *testing.T) {
+	db := setupTestDB(t)
+	logs, err := db.ListNetworkLogs("nonexistent-task")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0, got %d", len(logs))
+	}
+}
+
+func TestInsertAndListStepLogsRoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("sl-round-1", "Step Log Round Trip")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := []models.StepLog{
+		{TaskID: "sl-round-1", StepIndex: 0, Action: models.ActionNavigate, Value: "https://example.com", DurationMs: 150, StartedAt: time.Now().Truncate(time.Second)},
+		{TaskID: "sl-round-1", StepIndex: 1, Action: models.ActionClick, Selector: "#btn", SnapshotID: "snap-1", ErrorCode: "TIMEOUT", ErrorMsg: "timed out", DurationMs: 200, StartedAt: time.Now().Truncate(time.Second)},
+	}
+
+	if err := db.InsertStepLogs("sl-round-1", logs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	got, err := db.ListStepLogs("sl-round-1")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(got))
+	}
+	if got[0].Action != models.ActionNavigate {
+		t.Errorf("log[0].Action: got %q", got[0].Action)
+	}
+	if got[0].Value != "https://example.com" {
+		t.Errorf("log[0].Value: got %q", got[0].Value)
+	}
+	if got[1].Selector != "#btn" {
+		t.Errorf("log[1].Selector: got %q", got[1].Selector)
+	}
+	if got[1].SnapshotID != "snap-1" {
+		t.Errorf("log[1].SnapshotID: got %q", got[1].SnapshotID)
+	}
+	if got[1].ErrorCode != "TIMEOUT" {
+		t.Errorf("log[1].ErrorCode: got %q", got[1].ErrorCode)
+	}
+	if got[1].ErrorMsg != "timed out" {
+		t.Errorf("log[1].ErrorMsg: got %q", got[1].ErrorMsg)
+	}
+}
+
+func TestInsertAndListNetworkLogsRoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := makeTask("nl-round-1", "Net Log Round Trip")
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	logs := []models.NetworkLog{
+		{
+			TaskID:          "nl-round-1",
+			StepIndex:       0,
+			RequestURL:      "https://example.com/api",
+			Method:          "POST",
+			StatusCode:      201,
+			MimeType:        "application/json",
+			RequestHeaders:  `{"Content-Type":"application/json"}`,
+			ResponseHeaders: `{"X-Request-Id":"abc"}`,
+			RequestSize:     256,
+			ResponseSize:    1024,
+			DurationMs:      350,
+			Error:           "",
+			Timestamp:       time.Now().Truncate(time.Second),
+		},
+	}
+
+	if err := db.InsertNetworkLogs("nl-round-1", logs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	got, err := db.ListNetworkLogs("nl-round-1")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1, got %d", len(got))
+	}
+	if got[0].Method != "POST" {
+		t.Errorf("Method: got %q", got[0].Method)
+	}
+	if got[0].StatusCode != 201 {
+		t.Errorf("StatusCode: got %d", got[0].StatusCode)
+	}
+	if got[0].MimeType != "application/json" {
+		t.Errorf("MimeType: got %q", got[0].MimeType)
+	}
+	if got[0].RequestSize != 256 {
+		t.Errorf("RequestSize: got %d", got[0].RequestSize)
+	}
+	if got[0].ResponseSize != 1024 {
+		t.Errorf("ResponseSize: got %d", got[0].ResponseSize)
+	}
+}
+
+// --- Phase 2.5: JSON corruption error paths and additional coverage ---
+
+func TestScanTaskCorruptedStepsJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-steps-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "pending",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{"ok"},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Corrupt the steps JSON directly via SQL
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-steps-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.GetTask("corrupt-steps-1")
+	if err == nil {
+		t.Fatal("expected error from GetTask with corrupted steps JSON")
+	}
+}
+
+func TestScanTaskCorruptedResultJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-result-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "completed",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Corrupt the result JSON directly (must be non-empty to trigger parse)
+	if _, err := db.conn.Exec(`UPDATE tasks SET result = '<<<invalid>>>' WHERE id = ?`, "corrupt-result-1"); err != nil {
+		t.Fatalf("corrupt result: %v", err)
+	}
+
+	_, err := db.GetTask("corrupt-result-1")
+	if err == nil {
+		t.Fatal("expected error from GetTask with corrupted result JSON")
+	}
+}
+
+func TestScanTaskCorruptedTagsJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-tags-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "pending",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{"valid"},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET tags = '<<<invalid>>>' WHERE id = ?`, "corrupt-tags-1"); err != nil {
+		t.Fatalf("corrupt tags: %v", err)
+	}
+
+	_, err := db.GetTask("corrupt-tags-1")
+	if err == nil {
+		t.Fatal("expected error from GetTask with corrupted tags JSON")
+	}
+}
+
+func TestListTasksCorruptedJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-list-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "pending",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-list-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.ListTasks()
+	if err == nil {
+		t.Fatal("expected error from ListTasks with corrupted steps JSON")
+	}
+}
+
+func TestListTasksByStatusCorruptedJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-status-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "pending",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-status-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.ListTasksByStatus("pending")
+	if err == nil {
+		t.Fatal("expected error from ListTasksByStatus with corrupted JSON")
+	}
+}
+
+func TestGetRecordedFlowCorruptedSteps(t *testing.T) {
+	db := setupTestDB(t)
+
+	now := time.Now()
+	flow := models.RecordedFlow{
+		ID:          "flow-corrupt-1",
+		Name:        "corrupt flow",
+		Description: "testing corrupted steps",
+		Steps:       []models.RecordedStep{{Index: 0, Action: models.ActionClick, Selector: "#btn", Timestamp: now}},
+		OriginURL:   "https://example.com",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE recorded_flows SET steps = '<<<invalid>>>' WHERE id = ?`, "flow-corrupt-1"); err != nil {
+		t.Fatalf("corrupt flow steps: %v", err)
+	}
+
+	_, err := db.GetRecordedFlow("flow-corrupt-1")
+	if err == nil {
+		t.Fatal("expected error from GetRecordedFlow with corrupted steps")
+	}
+}
+
+func TestListRecordedFlowsCorruptedSteps(t *testing.T) {
+	db := setupTestDB(t)
+
+	now := time.Now()
+	flow := models.RecordedFlow{
+		ID:          "flow-corrupt-2",
+		Name:        "corrupt flow list",
+		Description: "testing corrupted steps",
+		Steps:       []models.RecordedStep{{Index: 0, Action: models.ActionClick, Selector: "#btn", Timestamp: now}},
+		OriginURL:   "https://example.com",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := db.CreateRecordedFlow(flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE recorded_flows SET steps = '<<<invalid>>>' WHERE id = ?`, "flow-corrupt-2"); err != nil {
+		t.Fatalf("corrupt flow steps: %v", err)
+	}
+
+	_, err := db.ListRecordedFlows()
+	if err == nil {
+		t.Fatal("expected error from ListRecordedFlows with corrupted steps")
+	}
+}
+
+func TestListTasksPaginatedCorruptedJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:     "corrupt-pag-1",
+		Name:   "test",
+		URL:    "https://example.com",
+		Status: "pending",
+		Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:   []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-pag-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.ListTasksPaginated(1, 10, "all", "")
+	if err == nil {
+		t.Fatal("expected error from ListTasksPaginated with corrupted JSON")
+	}
+}
+
+func TestGetTaskStatsMultipleStatuses(t *testing.T) {
+	db := setupTestDB(t)
+
+	statuses := []models.TaskStatus{models.TaskStatusPending, models.TaskStatusRunning, models.TaskStatusCompleted, models.TaskStatusFailed}
+	for i, status := range statuses {
+		task := models.Task{
+			ID:     fmt.Sprintf("stats-multi-%d", i),
+			Name:   "stats test",
+			URL:    "https://example.com",
+			Status: status,
+			Steps:  []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+			Tags:   []string{},
+		}
+		if err := db.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %s: %v", status, err)
+		}
+	}
+
+	stats, err := db.GetTaskStats()
+	if err != nil {
+		t.Fatalf("GetTaskStats: %v", err)
+	}
+	if len(stats) != 4 {
+		t.Errorf("expected 4 statuses, got %d: %v", len(stats), stats)
+	}
+	for _, s := range []string{"pending", "running", "completed", "failed"} {
+		if stats[s] != 1 {
+			t.Errorf("expected 1 for %s, got %d", s, stats[s])
+		}
+	}
+}
+
+func TestListAuditTrailFilteredByTask(t *testing.T) {
+	db := setupTestDB(t)
+
+	ev := models.TaskLifecycleEvent{
+		ID:        "ev-audit-filt-1",
+		TaskID:    "task-audit-filt-1",
+		BatchID:   "batch-audit-filt-1",
+		FromState: "pending",
+		ToState:   "running",
+		Timestamp: time.Now(),
+	}
+	if err := db.InsertTaskEvent(ev); err != nil {
+		t.Fatalf("InsertTaskEvent: %v", err)
+	}
+
+	// Query filtered by task
+	events, err := db.ListAuditTrail("task-audit-filt-1", 10)
+	if err != nil {
+		t.Fatalf("ListAuditTrail filtered: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].FromState != "pending" || events[0].ToState != "running" {
+		t.Errorf("unexpected event states: %q -> %q", events[0].FromState, events[0].ToState)
+	}
+
+	// Query for non-existent task returns empty
+	none, err := db.ListAuditTrail("no-such-task-filter", 5)
+	if err != nil {
+		t.Fatalf("ListAuditTrail no results: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("expected 0 events, got %d", len(none))
+	}
+}
+
+func TestListTasksByBatchCorruptedJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:      "corrupt-batch-1",
+		Name:    "test",
+		URL:     "https://example.com",
+		Status:  "pending",
+		BatchID: "batch-corrupt-1",
+		Steps:   []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:    []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-batch-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.ListTasksByBatch("batch-corrupt-1")
+	if err == nil {
+		t.Fatal("expected error from ListTasksByBatch with corrupted JSON")
+	}
+}
+
+func TestListTasksByBatchStatusCorruptedJSON(t *testing.T) {
+	db := setupTestDB(t)
+
+	task := models.Task{
+		ID:      "corrupt-bstat-1",
+		Name:    "test",
+		URL:     "https://example.com",
+		Status:  "pending",
+		BatchID: "batch-bstat-corrupt-1",
+		Steps:   []models.TaskStep{{Action: models.ActionClick, Selector: "#btn"}},
+		Tags:    []string{},
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if _, err := db.conn.Exec(`UPDATE tasks SET steps = '<<<invalid>>>' WHERE id = ?`, "corrupt-bstat-1"); err != nil {
+		t.Fatalf("corrupt steps: %v", err)
+	}
+
+	_, err := db.ListTasksByBatchStatus("batch-bstat-corrupt-1", "pending")
+	if err == nil {
+		t.Fatal("expected error from ListTasksByBatchStatus with corrupted JSON")
+	}
+}

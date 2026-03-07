@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { Task, BatchProgress } from '../lib/types';
   import { GetBatchProgress, RetryFailedBatch } from '../../wailsjs/go/main/App';
 
@@ -40,6 +41,13 @@
     clearInterval(interval);
     interval = null;
   }
+
+  onDestroy(() => {
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+  });
 
   async function retryFailed() {
     if (!batchId) return;

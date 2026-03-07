@@ -87,6 +87,7 @@ type TaskResult struct {
 	ExtractedData map[string]string `json:"extractedData,omitempty"`
 	Screenshots   []string          `json:"screenshots,omitempty"` // file paths
 	Logs          []LogEntry        `json:"logs"`
+	StepLogs      []StepLog         `json:"stepLogs,omitempty"`
 	Duration      time.Duration     `json:"duration"`
 	Error         string            `json:"error,omitempty"`
 }

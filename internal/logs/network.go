@@ -93,6 +93,16 @@ func (n *NetworkLogger) HandleLoadingFinished(ev *network.EventLoadingFinished, 
 	delete(n.responses, ev.RequestID)
 }
 
+// HandleLoadingFailed cleans up tracking maps for failed or cancelled requests
+// that will never receive a LoadingFinished event.
+func (n *NetworkLogger) HandleLoadingFailed(requestID network.RequestID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.startTimes, requestID)
+	delete(n.requests, requestID)
+	delete(n.responses, requestID)
+}
+
 // Logs returns accumulated network logs.
 func (n *NetworkLogger) Logs() []models.NetworkLog {
 	n.mu.Lock()

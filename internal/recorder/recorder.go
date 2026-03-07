@@ -35,10 +35,11 @@ type Recorder struct {
 	wsLogger      *logs.WebSocketLogger
 	snapshotter   *Snapshotter
 	activeTabID   target.ID
+	cdp           CDPClient
 }
 
 func New(parentCtx context.Context, flowID string, handler EventHandler) *Recorder {
-	return &Recorder{parentCtx: parentCtx, handler: handler, flowID: flowID, stepIndex: 0}
+	return &Recorder{parentCtx: parentCtx, handler: handler, flowID: flowID, stepIndex: 0, cdp: chromeCDPClient{}}
 }
 
 func (r *Recorder) Start(url string) error {
@@ -67,7 +68,7 @@ func (r *Recorder) Start(url string) error {
 		return err
 	}
 
-	if err := chromedp.Run(r.browserCtx, chromedp.Navigate(url)); err != nil {
+	if err := r.cdp.Run(r.browserCtx, chromedp.Navigate(url)); err != nil {
 		return fmt.Errorf("navigate to %s: %w", url, err)
 	}
 
@@ -79,99 +80,107 @@ func (r *Recorder) Start(url string) error {
 }
 
 func (r *Recorder) registerListeners() {
-	chromedp.ListenTarget(r.browserCtx, func(ev any) {
-		switch e := ev.(type) {
-		case *runtime.EventBindingCalled:
-			if e.Name != bindingName {
-				return
-			}
-			r.handleBindingCall(e.Payload)
-		case *page.EventFrameNavigated:
-			if e.Frame == nil || e.Frame.ParentID != "" {
-				return
-			}
-			r.RecordStep(models.ActionNavigate, "", e.Frame.URL)
-		case *target.EventTargetInfoChanged:
-			if e.TargetInfo == nil || e.TargetInfo.Type != "page" {
-				return
-			}
-			r.mu.Lock()
-			if r.activeTabID != "" && e.TargetInfo.TargetID != r.activeTabID {
-				r.activeTabID = e.TargetInfo.TargetID
-				r.mu.Unlock()
-				r.RecordStep(models.ActionTabSwitch, "", e.TargetInfo.URL)
-			} else {
-				if r.activeTabID == "" {
-					r.activeTabID = e.TargetInfo.TargetID
-				}
-				r.mu.Unlock()
-			}
-		case *network.EventRequestWillBeSent:
-			if r.netLogger != nil {
-				r.mu.Lock()
-				idx := r.stepIndex
-				r.mu.Unlock()
-				r.netLogger.SetStepIndex(idx)
-				r.netLogger.HandleRequestWillBeSent(e)
-			}
-		case *network.EventResponseReceived:
-			if r.netLogger != nil {
-				r.netLogger.HandleResponseReceived(e)
-			}
-		case *network.EventLoadingFinished:
-			if r.netLogger != nil {
-				r.netLogger.HandleLoadingFinished(e, nil)
-			}
-		case *network.EventWebSocketCreated:
-			if r.wsLogger != nil {
-				r.mu.Lock()
-				idx := r.stepIndex
-				r.mu.Unlock()
-				r.wsLogger.SetStepIndex(idx)
-				r.wsLogger.HandleCreated(e)
-			}
-		case *network.EventWebSocketHandshakeResponseReceived:
-			if r.wsLogger != nil {
-				r.wsLogger.HandleHandshake(e)
-			}
-		case *network.EventWebSocketFrameSent:
-			if r.wsLogger != nil {
-				r.wsLogger.HandleFrameSent(e)
-			}
-		case *network.EventWebSocketFrameReceived:
-			if r.wsLogger != nil {
-				r.wsLogger.HandleFrameReceived(e)
-			}
-		case *network.EventWebSocketClosed:
-			if r.wsLogger != nil {
-				r.wsLogger.HandleClosed(e)
-			}
-		case *network.EventWebSocketFrameError:
-			if r.wsLogger != nil {
-				r.wsLogger.HandleFrameError(e)
-			}
-		}
+	r.cdp.ListenTarget(r.browserCtx, func(ev any) {
+		r.handleEvent(ev)
 	})
 }
 
+func (r *Recorder) handleEvent(ev any) {
+	switch e := ev.(type) {
+	case *runtime.EventBindingCalled:
+		if e.Name != bindingName {
+			return
+		}
+		r.handleBindingCall(e.Payload)
+	case *page.EventFrameNavigated:
+		if e.Frame == nil || e.Frame.ParentID != "" {
+			return
+		}
+		r.RecordStep(models.ActionNavigate, "", e.Frame.URL)
+	case *target.EventTargetInfoChanged:
+		if e.TargetInfo == nil || e.TargetInfo.Type != "page" {
+			return
+		}
+		r.mu.Lock()
+		if r.activeTabID != "" && e.TargetInfo.TargetID != r.activeTabID {
+			r.activeTabID = e.TargetInfo.TargetID
+			r.mu.Unlock()
+			r.RecordStep(models.ActionTabSwitch, "", e.TargetInfo.URL)
+		} else {
+			if r.activeTabID == "" {
+				r.activeTabID = e.TargetInfo.TargetID
+			}
+			r.mu.Unlock()
+		}
+	case *network.EventRequestWillBeSent:
+		if r.netLogger != nil {
+			r.mu.Lock()
+			idx := r.stepIndex
+			r.mu.Unlock()
+			r.netLogger.SetStepIndex(idx)
+			r.netLogger.HandleRequestWillBeSent(e)
+		}
+	case *network.EventResponseReceived:
+		if r.netLogger != nil {
+			r.netLogger.HandleResponseReceived(e)
+		}
+	case *network.EventLoadingFinished:
+		if r.netLogger != nil {
+			r.netLogger.HandleLoadingFinished(e, nil)
+		}
+	case *network.EventLoadingFailed:
+		if r.netLogger != nil {
+			r.netLogger.HandleLoadingFailed(e.RequestID)
+		}
+	case *network.EventWebSocketCreated:
+		if r.wsLogger != nil {
+			r.mu.Lock()
+			idx := r.stepIndex
+			r.mu.Unlock()
+			r.wsLogger.SetStepIndex(idx)
+			r.wsLogger.HandleCreated(e)
+		}
+	case *network.EventWebSocketHandshakeResponseReceived:
+		if r.wsLogger != nil {
+			r.wsLogger.HandleHandshake(e)
+		}
+	case *network.EventWebSocketFrameSent:
+		if r.wsLogger != nil {
+			r.wsLogger.HandleFrameSent(e)
+		}
+	case *network.EventWebSocketFrameReceived:
+		if r.wsLogger != nil {
+			r.wsLogger.HandleFrameReceived(e)
+		}
+	case *network.EventWebSocketClosed:
+		if r.wsLogger != nil {
+			r.wsLogger.HandleClosed(e)
+		}
+	case *network.EventWebSocketFrameError:
+		if r.wsLogger != nil {
+			r.wsLogger.HandleFrameError(e)
+		}
+	}
+}
+
 func (r *Recorder) enableDomains() error {
-	if err := chromedp.Run(r.browserCtx, runtime.Enable()); err != nil {
+	if err := r.cdp.Run(r.browserCtx, runtime.Enable()); err != nil {
 		return fmt.Errorf("enable runtime domain: %w", err)
 	}
-	if err := chromedp.Run(r.browserCtx, page.Enable()); err != nil {
+	if err := r.cdp.Run(r.browserCtx, page.Enable()); err != nil {
 		return fmt.Errorf("enable page domain: %w", err)
 	}
-	if err := chromedp.Run(r.browserCtx, network.Enable()); err != nil {
+	if err := r.cdp.Run(r.browserCtx, network.Enable()); err != nil {
 		return fmt.Errorf("enable network domain: %w", err)
 	}
-	if err := chromedp.Run(r.browserCtx, runtime.AddBinding(bindingName)); err != nil {
+	if err := r.cdp.Run(r.browserCtx, runtime.AddBinding(bindingName)); err != nil {
 		return fmt.Errorf("add binding %s: %w", bindingName, err)
 	}
 	return nil
 }
 
 func (r *Recorder) installCaptureScript() error {
-	err := chromedp.Run(r.browserCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := r.cdp.Run(r.browserCtx, chromedp.ActionFunc(func(ctx context.Context) error {
 		_, err := page.AddScriptToEvaluateOnNewDocument(captureScript).Do(ctx)
 		return err
 	}))
@@ -182,7 +191,7 @@ func (r *Recorder) installCaptureScript() error {
 }
 
 func (r *Recorder) injectCaptureScript() error {
-	return chromedp.Run(r.browserCtx, chromedp.Evaluate(captureScript, nil))
+	return r.cdp.Run(r.browserCtx, chromedp.Evaluate(captureScript, nil))
 }
 
 func (r *Recorder) handleBindingCall(payload string) {

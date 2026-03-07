@@ -138,6 +138,42 @@ func TestClassifyErrorScreenshotFail(t *testing.T) {
 	}
 }
 
+func TestClassifyErrorEvalFailed(t *testing.T) {
+	tests := []struct {
+		name string
+		err  string
+	}{
+		{"eval validation", "eval validation failed: script too large"},
+		{"eval script", "eval script contains blocked pattern"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyError(errors.New(tc.err))
+			if got != ErrCodeEvalFailed {
+				t.Errorf("ClassifyError(%q): got %q, want %q", tc.err, got, ErrCodeEvalFailed)
+			}
+		})
+	}
+}
+
+func TestClassifyErrorAuthRequired(t *testing.T) {
+	tests := []struct {
+		name string
+		err  string
+	}{
+		{"401 status", "server returned 401"},
+		{"unauthorized", "unauthorized access denied"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyError(errors.New(tc.err))
+			if got != ErrCodeAuthRequired {
+				t.Errorf("ClassifyError(%q): got %q, want %q", tc.err, got, ErrCodeAuthRequired)
+			}
+		})
+	}
+}
+
 func TestClassifyErrorUnknown(t *testing.T) {
 	got := ClassifyError(errors.New("some totally random error"))
 	if got != ErrCodeUnknown {
@@ -678,5 +714,44 @@ func BenchmarkFlowToTaskSteps(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		FlowToTaskSteps(flow)
+	}
+}
+
+// --- TruncatePayload Tests ---
+
+func TestTruncatePayloadShort(t *testing.T) {
+	input := "short payload"
+	got := TruncatePayload(input)
+	if got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestTruncatePayloadExactLimit(t *testing.T) {
+	input := make([]byte, MaxWSPayloadSnippet)
+	for i := range input {
+		input[i] = 'x'
+	}
+	got := TruncatePayload(string(input))
+	if got != string(input) {
+		t.Errorf("expected no truncation for exact-limit payload")
+	}
+}
+
+func TestTruncatePayloadOverLimit(t *testing.T) {
+	input := make([]byte, MaxWSPayloadSnippet+100)
+	for i := range input {
+		input[i] = 'y'
+	}
+	got := TruncatePayload(string(input))
+	if len(got) != MaxWSPayloadSnippet {
+		t.Errorf("expected length %d, got %d", MaxWSPayloadSnippet, len(got))
+	}
+}
+
+func TestTruncatePayloadEmpty(t *testing.T) {
+	got := TruncatePayload("")
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
 	}
 }

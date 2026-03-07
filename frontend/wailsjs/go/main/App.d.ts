@@ -8,7 +8,7 @@ export function CancelTask(arg1:string):Promise<void>;
 
 export function CreateBatch(arg1:Array<models.BatchTaskInput>,arg2:boolean):Promise<Array<models.Task>>;
 
-export function CreateBatchFromFlow(arg1:models.AdvancedBatchInput):Promise<models.BatchGroup>;
+export function CreateBatchFromFlow(arg1:models.AdvancedBatchInput):Promise<[models.BatchGroup, Array<models.Task>]>;
 
 export function CreateRecordedFlow(arg1:string,arg2:string,arg3:string,arg4:Array<models.RecordedStep>):Promise<models.RecordedFlow>;
 
@@ -28,7 +28,7 @@ export function ExportResultsCSV():Promise<string>;
 
 export function ExportResultsJSON():Promise<string>;
 
-export function ExportTaskLogs(arg1:string):Promise<string>;
+export function ExportTaskLogs(arg1:string):Promise<[string, string]>;
 
 export function GetBatchProgress(arg1:string):Promise<models.BatchProgress>;
 
@@ -69,3 +69,19 @@ export function IsRecording():Promise<boolean>;
 export function StartRecording(arg1:string):Promise<void>;
 
 export function StopRecording():Promise<Array<models.RecordedStep>>;
+
+export function GetAuditTrail(arg1:string,arg2:number):Promise<Array<models.TaskLifecycleEvent>>;
+
+export function ListTasksPaginated(arg1:number,arg2:number,arg3:string,arg4:string):Promise<models.PaginatedTasks>;
+
+export function ListWebSocketLogs(arg1:string):Promise<Array<models.WebSocketLog>>;
+
+export function PlayRecordedFlow(arg1:string,arg2:string,arg3:boolean):Promise<models.Task>;
+
+export function ParseBatchURLs(arg1:string,arg2:boolean):Promise<Array<string>>;
+
+export function PurgeOldData(arg1:number):Promise<number>;
+
+export function UpdateRecordedFlow(arg1:models.RecordedFlow):Promise<void>;
+
+export function ListTaskEvents(arg1:string):Promise<Array<models.TaskLifecycleEvent>>;

@@ -472,9 +472,9 @@ func TestParseURLList(t *testing.T) {
 
 func TestParseCSVURLs(t *testing.T) {
 	tests := []struct {
-		name  string
-		csv   string
-		want  int
+		name string
+		csv  string
+		want int
 	}{
 		{"basic", "https://a.com\nhttps://b.com\n", 2},
 		{"multi-column", "https://a.com,col2\nhttps://b.com,col2\n", 2},
@@ -567,5 +567,13 @@ func TestBatchHeadlessHelper(t *testing.T) {
 	input.Headless = boolPtr(false)
 	if input.BatchHeadless() {
 		t.Error("BatchHeadless() should return false for *false")
+	}
+}
+
+func TestExtractDomainParseError(t *testing.T) {
+	// url.Parse returns error for URLs with invalid percent-encoding
+	got := ExtractDomain("https://example.com/%zz")
+	if got != "" {
+		t.Errorf("expected empty for invalid URL, got %q", got)
 	}
 }

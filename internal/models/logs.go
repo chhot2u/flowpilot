@@ -109,8 +109,12 @@ func ClassifyError(err error) ErrorCode {
 		return ErrCodeProxyFailed
 	case containsAny(msg, "net::err_", "network"):
 		return ErrCodeNetworkError
-	case containsAny(msg, "eval", "alloweval"):
+	case containsAny(msg, "alloweval", "eval_blocked", "eval action is not allowed", "eval is blocked"):
 		return ErrCodeEvalBlocked
+	case containsAny(msg, "eval validation failed", "eval script"):
+		return ErrCodeEvalFailed
+	case containsAny(msg, "auth_required", "401", "unauthorized"):
+		return ErrCodeAuthRequired
 	case containsAny(msg, "screenshot"):
 		return ErrCodeScreenshotFail
 	default:

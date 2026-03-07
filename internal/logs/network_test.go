@@ -210,3 +210,56 @@ func TestStartTimeClearedAfterFinish(t *testing.T) {
 		t.Error("responses should be cleaned up after finish")
 	}
 }
+
+func TestHandleLoadingFailedCleansUpMaps(t *testing.T) {
+	logger := NewNetworkLogger("task-fail-1")
+
+	// Simulate a request that starts but never finishes
+	logger.HandleRequestWillBeSent(&network.EventRequestWillBeSent{
+		RequestID: "req-failed-1",
+		Request:   &network.Request{URL: "https://example.com/timeout", Method: "GET"},
+	})
+	logger.HandleResponseReceived(&network.EventResponseReceived{
+		RequestID: "req-failed-1",
+		Response:  &network.Response{URL: "https://example.com/timeout", Status: 0},
+	})
+
+	// Request fails — this should clean up
+	logger.HandleLoadingFailed("req-failed-1")
+
+	// Verify maps are empty (no leak)
+	logger.mu.Lock()
+	startLen := len(logger.startTimes)
+	reqLen := len(logger.requests)
+	respLen := len(logger.responses)
+	logger.mu.Unlock()
+
+	if startLen != 0 {
+		t.Errorf("startTimes should be empty, got %d entries", startLen)
+	}
+	if reqLen != 0 {
+		t.Errorf("requests should be empty, got %d entries", reqLen)
+	}
+	if respLen != 0 {
+		t.Errorf("responses should be empty, got %d entries", respLen)
+	}
+
+	// Logs should be empty (failed request doesn't produce a log)
+	logs := logger.Logs()
+	if len(logs) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(logs))
+	}
+}
+
+func TestHandleLoadingFailedIdempotent(t *testing.T) {
+	logger := NewNetworkLogger("task-fail-2")
+
+	// Call HandleLoadingFailed for a request that was never started
+	logger.HandleLoadingFailed("nonexistent-req")
+
+	// Should not panic or produce logs
+	logs := logger.Logs()
+	if len(logs) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(logs))
+	}
+}

@@ -2,14 +2,18 @@ package browser
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"flowpilot/internal/models"
 
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -63,7 +67,7 @@ func TestNewRunnerInvalidPath(t *testing.T) {
 }
 
 func TestAddLog(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID: "test-log",
 	}
@@ -95,7 +99,7 @@ func TestAddLog(t *testing.T) {
 }
 
 func TestExecuteStepUnknownAction(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID:        "test-unknown",
 		ExtractedData: make(map[string]string),
@@ -115,7 +119,7 @@ func TestExecuteStepUnknownAction(t *testing.T) {
 }
 
 func TestExecScrollValidation(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	tests := []struct {
 		name    string
@@ -161,7 +165,7 @@ func TestExecScrollValidation(t *testing.T) {
 }
 
 func TestExecWaitContextCancellation(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -190,7 +194,7 @@ func TestExecWaitContextCancellation(t *testing.T) {
 }
 
 func TestExecWaitWithDuration(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	step := models.TaskStep{
 		Action: models.ActionWait,
@@ -214,7 +218,7 @@ func TestExecWaitWithDuration(t *testing.T) {
 }
 
 func TestExecWaitWithSelector(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	step := models.TaskStep{
 		Action:   models.ActionWait,
@@ -229,7 +233,7 @@ func TestExecWaitWithSelector(t *testing.T) {
 }
 
 func TestExecWaitInvalidDuration(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	step := models.TaskStep{
 		Action: models.ActionWait,
@@ -251,7 +255,7 @@ func TestExecWaitInvalidDuration(t *testing.T) {
 }
 
 func TestRunStepsEmptySteps(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID:        "empty-steps",
 		ExtractedData: make(map[string]string),
@@ -269,7 +273,7 @@ func TestRunStepsEmptySteps(t *testing.T) {
 }
 
 func TestRunStepsStopsOnError(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID:        "stop-on-error",
 		ExtractedData: make(map[string]string),
@@ -308,7 +312,7 @@ func TestRunStepsStopsOnError(t *testing.T) {
 }
 
 func TestCreateAllocatorWithoutProxy(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	ctx := context.Background()
 	allocCtx, allocCancel := runner.createAllocator(ctx, models.ProxyConfig{}, true)
@@ -320,7 +324,7 @@ func TestCreateAllocatorWithoutProxy(t *testing.T) {
 }
 
 func TestCreateAllocatorWithProxy(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	proxy := models.ProxyConfig{
 		Server:   "proxy.example.com:8080",
@@ -338,7 +342,7 @@ func TestCreateAllocatorWithProxy(t *testing.T) {
 }
 
 func TestCreateAllocatorDoesNotMutateDefaults(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	originalLen := len(chromedp.DefaultExecAllocatorOptions)
 
@@ -357,7 +361,7 @@ func TestCreateAllocatorDoesNotMutateDefaults(t *testing.T) {
 }
 
 func TestExecuteStepDispatchesCorrectly(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID:        "dispatch-test",
 		ExtractedData: make(map[string]string),
@@ -416,7 +420,7 @@ func TestSanitizeFilename(t *testing.T) {
 
 func TestExecScreenshotPathTraversal(t *testing.T) {
 	dir := t.TempDir()
-	_ = &Runner{screenshotDir: dir}
+	_ = &Runner{screenshotDir: dir, exec: chromeExecutor{}}
 	result := &models.TaskResult{
 		TaskID:        "../../etc/cron.d/evil",
 		ExtractedData: make(map[string]string),
@@ -434,7 +438,7 @@ func TestExecScreenshotPathTraversal(t *testing.T) {
 }
 
 func TestExecEvalBlockedByDefault(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	step := models.TaskStep{
 		Action: models.ActionEval,
@@ -451,7 +455,7 @@ func TestExecEvalBlockedByDefault(t *testing.T) {
 }
 
 func TestExecEvalAllowedWhenEnabled(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	runner.allowEval.Store(true)
 
 	step := models.TaskStep{
@@ -466,7 +470,7 @@ func TestExecEvalAllowedWhenEnabled(t *testing.T) {
 }
 
 func TestSetAllowEval(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	if runner.allowEval.Load() {
 		t.Fatal("allowEval should default to false")
 	}
@@ -529,7 +533,7 @@ func TestValidateEvalScript(t *testing.T) {
 }
 
 func TestExecEvalValidationIntegration(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 	runner.allowEval.Store(true)
 
 	// Blocked pattern should be rejected even when eval is allowed
@@ -557,7 +561,7 @@ func TestExecEvalValidationIntegration(t *testing.T) {
 }
 
 func TestExecEvalReenabledAfterDisable(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	// Enable then disable
 	runner.SetAllowEval(true)
@@ -587,7 +591,7 @@ func TestCreateAllocatorRespectsHeadless(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &Runner{screenshotDir: t.TempDir()}
+			runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 			runner.forceHeadless.Store(tc.forceHeadless)
 
 			ctx := context.Background()
@@ -605,7 +609,7 @@ func TestCreateAllocatorRespectsHeadless(t *testing.T) {
 }
 
 func TestSetForceHeadless(t *testing.T) {
-	runner := &Runner{screenshotDir: t.TempDir()}
+	runner := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
 
 	if runner.forceHeadless.Load() {
 		t.Fatal("forceHeadless should default to false")
@@ -619,5 +623,700 @@ func TestSetForceHeadless(t *testing.T) {
 	runner.SetForceHeadless(false)
 	if runner.forceHeadless.Load() {
 		t.Fatal("forceHeadless should be false after SetForceHeadless(false)")
+	}
+}
+
+type mockExecutor struct {
+	mu      sync.Mutex
+	calls   []string
+	runErr  error
+	targErr error
+	targets []*target.Info
+}
+
+func (m *mockExecutor) Run(ctx context.Context, actions ...chromedp.Action) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, fmt.Sprintf("Run(%d actions)", len(actions)))
+	return m.runErr
+}
+
+func (m *mockExecutor) Targets(ctx context.Context) ([]*target.Info, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, "Targets")
+	return m.targets, m.targErr
+}
+
+func (m *mockExecutor) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.calls)
+}
+
+func newMockRunner(t *testing.T, exec *mockExecutor) *Runner {
+	t.Helper()
+	return &Runner{screenshotDir: t.TempDir(), exec: exec}
+}
+
+func TestExecNavigateWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Action: models.ActionNavigate, Value: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecNavigateError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("nav failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err == nil || err.Error() != "nav failed" {
+		t.Fatalf("expected 'nav failed', got: %v", err)
+	}
+}
+
+func TestExecClickWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execClick(context.Background(), models.TaskStep{Selector: "#btn"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecClickError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("click failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execClick(context.Background(), models.TaskStep{Selector: "#btn"})
+	if err == nil || err.Error() != "click failed" {
+		t.Fatalf("expected 'click failed', got: %v", err)
+	}
+}
+
+func TestExecTypeWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execType(context.Background(), models.TaskStep{Selector: "#input", Value: "hello"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecTypeError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("type failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execType(context.Background(), models.TaskStep{Selector: "#input", Value: "hello"})
+	if err == nil || err.Error() != "type failed" {
+		t.Fatalf("expected 'type failed', got: %v", err)
+	}
+}
+
+func TestExecSelectWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execSelect(context.Background(), models.TaskStep{Selector: "select#opt", Value: "val1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecSelectError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("select failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execSelect(context.Background(), models.TaskStep{Selector: "select#opt", Value: "val1"})
+	if err == nil || err.Error() != "select failed" {
+		t.Fatalf("expected 'select failed', got: %v", err)
+	}
+}
+
+func TestExecScrollWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execScroll(context.Background(), models.TaskStep{Value: "500"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecScrollError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("scroll failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execScroll(context.Background(), models.TaskStep{Value: "500"})
+	if err == nil || err.Error() != "scroll failed" {
+		t.Fatalf("expected 'scroll failed', got: %v", err)
+	}
+}
+
+func TestExecEvalWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	r.allowEval.Store(true)
+
+	err := r.execEval(context.Background(), models.TaskStep{Value: "1+1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecEvalError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("eval failed")}
+	r := newMockRunner(t, mock)
+	r.allowEval.Store(true)
+
+	err := r.execEval(context.Background(), models.TaskStep{Value: "1+1"})
+	if err == nil || err.Error() != "eval failed" {
+		t.Fatalf("expected 'eval failed', got: %v", err)
+	}
+}
+
+func TestExecScreenshotWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "test-ss", ExtractedData: make(map[string]string)}
+
+	err := r.execScreenshot(context.Background(), result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Screenshots) != 1 {
+		t.Fatalf("expected 1 screenshot path, got %d", len(result.Screenshots))
+	}
+	if !strings.HasPrefix(result.Screenshots[0], r.screenshotDir) {
+		t.Errorf("screenshot path %q not under %q", result.Screenshots[0], r.screenshotDir)
+	}
+}
+
+func TestExecScreenshotRunError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("screenshot failed")}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "test-ss-err", ExtractedData: make(map[string]string)}
+
+	err := r.execScreenshot(context.Background(), result)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "capture screenshot") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+}
+
+func TestExecScreenshotPathTraversalSanitized(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "../../etc/evil", ExtractedData: make(map[string]string)}
+
+	err := r.execScreenshot(context.Background(), result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Screenshots) != 1 {
+		t.Fatal("expected screenshot to be saved")
+	}
+	if !strings.HasPrefix(result.Screenshots[0], r.screenshotDir) {
+		t.Errorf("path escaped screenshot dir: %s", result.Screenshots[0])
+	}
+}
+
+func TestExecExtractWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "test-extract", ExtractedData: make(map[string]string)}
+
+	err := r.execExtract(context.Background(), models.TaskStep{Selector: "#title", Value: "pageTitle"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["pageTitle"]; !ok {
+		t.Error("expected 'pageTitle' key in extracted data")
+	}
+}
+
+func TestExecExtractDefaultKey(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "test-extract-key", ExtractedData: make(map[string]string)}
+
+	err := r.execExtract(context.Background(), models.TaskStep{Selector: "#title", Value: ""}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["#title"]; !ok {
+		t.Error("expected selector as key when value is empty")
+	}
+}
+
+func TestExecExtractError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("extract failed")}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "test-extract-err", ExtractedData: make(map[string]string)}
+
+	err := r.execExtract(context.Background(), models.TaskStep{Selector: "#title", Value: "key"}, result)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "extract text") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+}
+
+func TestExecTabSwitchFound(t *testing.T) {
+	mock := &mockExecutor{
+		targets: []*target.Info{
+			{Type: "page", URL: "https://example.com"},
+			{Type: "page", URL: "https://other.com"},
+		},
+	}
+	r := newMockRunner(t, mock)
+
+	err := r.execTabSwitch(context.Background(), models.TaskStep{Value: "https://other.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 2 {
+		t.Fatalf("expected 2 calls (Targets + Run), got %d", mock.callCount())
+	}
+}
+
+func TestExecTabSwitchNotFound(t *testing.T) {
+	mock := &mockExecutor{
+		targets: []*target.Info{
+			{Type: "page", URL: "https://example.com"},
+		},
+	}
+	r := newMockRunner(t, mock)
+
+	err := r.execTabSwitch(context.Background(), models.TaskStep{Value: "https://missing.com"})
+	if err == nil {
+		t.Fatal("expected error for missing tab")
+	}
+	if !strings.Contains(err.Error(), "tab with URL") {
+		t.Errorf("expected 'tab with URL' error, got: %v", err)
+	}
+}
+
+func TestExecTabSwitchTargetsError(t *testing.T) {
+	mock := &mockExecutor{targErr: errors.New("targets failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execTabSwitch(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "list targets") {
+		t.Errorf("expected 'list targets' error, got: %v", err)
+	}
+}
+
+func TestExecTabSwitchSkipsNonPage(t *testing.T) {
+	mock := &mockExecutor{
+		targets: []*target.Info{
+			{Type: "background_page", URL: "https://example.com"},
+			{Type: "service_worker", URL: "https://example.com"},
+		},
+	}
+	r := newMockRunner(t, mock)
+
+	err := r.execTabSwitch(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected not-found error when only non-page targets exist")
+	}
+}
+
+func TestRunStepsWithMockSuccess(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "steps-ok", ExtractedData: make(map[string]string)}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionClick, Selector: "#btn"},
+		{Action: models.ActionType, Selector: "#input", Value: "hello"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 3 {
+		t.Fatalf("expected 3 executor calls, got %d", mock.callCount())
+	}
+	if len(result.Logs) != 6 {
+		t.Fatalf("expected 6 log entries (start+end per step), got %d", len(result.Logs))
+	}
+}
+
+func TestRunStepsWithMockStopsOnError(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "steps-err", ExtractedData: make(map[string]string)}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: "bad_action"},
+		{Action: models.ActionClick, Selector: "#btn"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 executor call (only first step), got %d", mock.callCount())
+	}
+}
+
+func TestRunStepsCustomTimeout(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "steps-timeout", ExtractedData: make(map[string]string)}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com", Timeout: 5000},
+	}
+
+	err := r.runSteps(context.Background(), steps, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetupProxyAuthWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	allocCtx, allocCancel := r.createAllocator(context.Background(), models.ProxyConfig{Server: "proxy:8080"}, true)
+	defer allocCancel()
+
+	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	defer browserCancel()
+
+	err := r.setupProxyAuth(browserCtx, models.ProxyConfig{
+		Server:   "proxy:8080",
+		Username: "user",
+		Password: "pass",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 Run call for fetch.Enable, got %d", mock.callCount())
+	}
+}
+
+func TestSetupProxyAuthError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("fetch enable failed")}
+	r := newMockRunner(t, mock)
+
+	allocCtx, allocCancel := r.createAllocator(context.Background(), models.ProxyConfig{Server: "proxy:8080"}, true)
+	defer allocCancel()
+
+	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	defer browserCancel()
+
+	err := r.setupProxyAuth(browserCtx, models.ProxyConfig{
+		Server:   "proxy:8080",
+		Username: "user",
+		Password: "pass",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "enable fetch for proxy auth") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+}
+
+func TestRunTaskNoStepsNoProxy(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	task := models.Task{
+		ID:       "task-1",
+		Headless: true,
+		Steps:    []models.TaskStep{},
+	}
+
+	result, err := r.RunTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Error("expected success=true")
+	}
+	if result.TaskID != "task-1" {
+		t.Errorf("expected taskID 'task-1', got %q", result.TaskID)
+	}
+	if result.Duration <= 0 {
+		t.Error("expected positive duration")
+	}
+}
+
+func TestRunTaskWithSteps(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	task := models.Task{
+		ID:       "task-2",
+		Headless: true,
+		Steps: []models.TaskStep{
+			{Action: models.ActionNavigate, Value: "https://example.com"},
+			{Action: models.ActionClick, Selector: "#btn"},
+		},
+	}
+
+	result, err := r.RunTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Error("expected success")
+	}
+	if mock.callCount() != 2 {
+		t.Fatalf("expected 2 executor calls, got %d", mock.callCount())
+	}
+}
+
+func TestRunTaskWithProxy(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	task := models.Task{
+		ID:       "task-proxy",
+		Headless: true,
+		Proxy: models.ProxyConfig{
+			Server:   "proxy:8080",
+			Username: "user",
+			Password: "pass",
+		},
+		Steps: []models.TaskStep{
+			{Action: models.ActionNavigate, Value: "https://example.com"},
+		},
+	}
+
+	result, err := r.RunTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Error("expected success")
+	}
+	if mock.callCount() != 2 {
+		t.Fatalf("expected 2 calls (fetch.Enable + navigate), got %d", mock.callCount())
+	}
+}
+
+func TestRunTaskProxyAuthFails(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("fetch enable failed")}
+	r := newMockRunner(t, mock)
+
+	task := models.Task{
+		ID:       "task-proxy-fail",
+		Headless: true,
+		Proxy: models.ProxyConfig{
+			Server:   "proxy:8080",
+			Username: "user",
+			Password: "pass",
+		},
+		Steps: []models.TaskStep{
+			{Action: models.ActionNavigate, Value: "https://example.com"},
+		},
+	}
+
+	result, err := r.RunTask(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if result.Success {
+		t.Error("expected success=false")
+	}
+	if !strings.Contains(result.Error, "proxy auth setup failed") {
+		t.Errorf("expected proxy auth error in result, got: %q", result.Error)
+	}
+}
+
+func TestRunTaskStepFails(t *testing.T) {
+	callCount := 0
+	mock := &mockExecutor{}
+	mock.runErr = nil
+	r := newMockRunner(t, mock)
+
+	failOnSecond := &mockExecutor{}
+	r.exec = &callCountExecutor{
+		onCall: func(n int) error {
+			callCount = n
+			if n == 2 {
+				return errors.New("step 2 failed")
+			}
+			return nil
+		},
+	}
+
+	task := models.Task{
+		ID:       "task-step-fail",
+		Headless: true,
+		Steps: []models.TaskStep{
+			{Action: models.ActionNavigate, Value: "https://example.com"},
+			{Action: models.ActionClick, Selector: "#btn"},
+		},
+	}
+	_ = failOnSecond
+
+	result, err := r.RunTask(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if result.Success {
+		t.Error("expected success=false")
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 calls, got %d", callCount)
+	}
+}
+
+type callCountExecutor struct {
+	mu     sync.Mutex
+	count  int
+	onCall func(n int) error
+}
+
+func (c *callCountExecutor) Run(ctx context.Context, actions ...chromedp.Action) error {
+	c.mu.Lock()
+	c.count++
+	n := c.count
+	c.mu.Unlock()
+	return c.onCall(n)
+}
+
+func (c *callCountExecutor) Targets(ctx context.Context) ([]*target.Info, error) {
+	return nil, nil
+}
+
+func TestCreateAllocatorWithProtocol(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+
+	proxy := models.ProxyConfig{
+		Server:   "proxy.example.com:1080",
+		Protocol: models.ProxySOCKS5,
+	}
+
+	allocCtx, allocCancel := r.createAllocator(context.Background(), proxy, true)
+	defer allocCancel()
+
+	if allocCtx == nil {
+		t.Fatal("allocator context is nil")
+	}
+}
+
+func TestExecWaitSelectorWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execWait(context.Background(), models.TaskStep{Selector: "#elem"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 call, got %d", mock.callCount())
+	}
+}
+
+func TestExecWaitSelectorError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("wait failed")}
+	r := newMockRunner(t, mock)
+
+	err := r.execWait(context.Background(), models.TaskStep{Selector: "#elem"})
+	if err == nil || err.Error() != "wait failed" {
+		t.Fatalf("expected 'wait failed', got: %v", err)
+	}
+}
+
+func TestExecuteStepAllActionsWithMock(t *testing.T) {
+	tests := []struct {
+		action   models.StepAction
+		selector string
+		value    string
+	}{
+		{models.ActionNavigate, "", "https://example.com"},
+		{models.ActionClick, "#btn", ""},
+		{models.ActionType, "#input", "text"},
+		{models.ActionWait, "#elem", ""},
+		{models.ActionScreenshot, "", ""},
+		{models.ActionExtract, "#data", "key"},
+		{models.ActionScroll, "", "100"},
+		{models.ActionSelect, "#sel", "opt1"},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.action), func(t *testing.T) {
+			mock := &mockExecutor{}
+			r := newMockRunner(t, mock)
+			result := &models.TaskResult{TaskID: "dispatch", ExtractedData: make(map[string]string)}
+
+			step := models.TaskStep{Action: tc.action, Selector: tc.selector, Value: tc.value}
+			err := r.executeStep(context.Background(), step, result)
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", tc.action, err)
+			}
+			if mock.callCount() < 1 {
+				t.Fatalf("expected at least 1 executor call for %s", tc.action)
+			}
+		})
+	}
+}
+
+func TestExecuteStepTabSwitchWithMock(t *testing.T) {
+	mock := &mockExecutor{
+		targets: []*target.Info{{Type: "page", URL: "https://example.com"}},
+	}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "tab", ExtractedData: make(map[string]string)}
+
+	step := models.TaskStep{Action: models.ActionTabSwitch, Value: "https://example.com"}
+	err := r.executeStep(context.Background(), step, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecuteStepEvalWithMock(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	r.allowEval.Store(true)
+	result := &models.TaskResult{TaskID: "eval", ExtractedData: make(map[string]string)}
+
+	step := models.TaskStep{Action: models.ActionEval, Value: "1+1"}
+	err := r.executeStep(context.Background(), step, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

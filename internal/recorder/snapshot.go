@@ -15,6 +15,7 @@ import (
 // Snapshotter captures DOM HTML and screenshots for recorded steps.
 type Snapshotter struct {
 	outputDir string
+	cdp       CDPClient
 }
 
 // NewSnapshotter creates a snapshotter for a given output directory.
@@ -22,14 +23,14 @@ func NewSnapshotter(outputDir string) (*Snapshotter, error) {
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create snapshot dir: %w", err)
 	}
-	return &Snapshotter{outputDir: outputDir}, nil
+	return &Snapshotter{outputDir: outputDir, cdp: chromeCDPClient{}}, nil
 }
 
 // CaptureSnapshot captures the current DOM HTML and a full screenshot.
 func (s *Snapshotter) CaptureSnapshot(ctx context.Context, flowID string, stepIndex int) (models.DOMSnapshot, error) {
 	var html string
 	var buf []byte
-	if err := chromedp.Run(ctx,
+	if err := s.cdp.Run(ctx,
 		chromedp.OuterHTML("html", &html, chromedp.ByQuery),
 		chromedp.FullScreenshot(&buf, 90),
 	); err != nil {
@@ -43,7 +44,7 @@ func (s *Snapshotter) CaptureSnapshot(ctx context.Context, flowID string, stepIn
 	}
 
 	var url string
-	_ = chromedp.Run(ctx, chromedp.Location(&url))
+	_ = s.cdp.Run(ctx, chromedp.Location(&url))
 
 	return models.DOMSnapshot{
 		ID:             fmt.Sprintf("snap_%d", time.Now().UnixNano()),

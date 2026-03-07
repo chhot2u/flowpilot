@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"flowpilot/internal/logs"
 	"flowpilot/internal/models"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -69,6 +70,7 @@ type Runner struct {
 	screenshotDir string
 	allowEval     atomic.Bool
 	forceHeadless atomic.Bool
+	exec          Executor
 }
 
 // NewRunner creates a new browser runner. Eval steps are blocked by default.
@@ -76,7 +78,7 @@ func NewRunner(screenshotDir string) (*Runner, error) {
 	if err := os.MkdirAll(screenshotDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create screenshot dir: %w", err)
 	}
-	r := &Runner{screenshotDir: screenshotDir}
+	r := &Runner{screenshotDir: screenshotDir, exec: chromeExecutor{}}
 	r.allowEval.Store(false)
 	return r, nil
 }
@@ -104,6 +106,10 @@ func (r *Runner) RunTask(ctx context.Context, task models.Task) (*models.TaskRes
 
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
 	defer browserCancel()
+
+	if err := ClearCookies(browserCtx); err != nil {
+		r.addLog(result, "warn", fmt.Sprintf("clear cookies: %v", err))
+	}
 
 	if task.Proxy.Username != "" {
 		if err := r.setupProxyAuth(browserCtx, task.Proxy); err != nil {
@@ -158,6 +164,9 @@ func (r *Runner) createAllocator(ctx context.Context, proxyConfig models.ProxyCo
 
 // runSteps iterates through each task step and executes it.
 func (r *Runner) runSteps(browserCtx context.Context, steps []models.TaskStep, result *models.TaskResult) error {
+	stepLogger := logs.NewStepLogger(result.TaskID)
+	defer func() { result.StepLogs = stepLogger.Logs() }()
+
 	for i, step := range steps {
 		r.addLog(result, "info", fmt.Sprintf("step %d: %s", i+1, step.Action))
 
@@ -166,9 +175,17 @@ func (r *Runner) runSteps(browserCtx context.Context, steps []models.TaskStep, r
 			timeout = time.Duration(step.Timeout) * time.Millisecond
 		}
 
+		start := stepLogger.StartStep(i, step.Action, step.Selector, step.Value, "")
+
 		stepCtx, stepCancel := context.WithTimeout(browserCtx, timeout)
 		err := r.executeStep(stepCtx, step, result)
 		stepCancel()
+
+		var code models.ErrorCode
+		if err != nil {
+			code = models.ClassifyError(err)
+		}
+		stepLogger.EndStep(i, step.Action, step.Selector, step.Value, "", start, err, code)
 
 		if err != nil {
 			r.addLog(result, "error", fmt.Sprintf("step %d failed: %v", i+1, err))
@@ -213,7 +230,7 @@ func (r *Runner) setupProxyAuth(ctx context.Context, proxyConfig models.ProxyCon
 		}
 	})
 
-	if err := chromedp.Run(ctx, fetch.Enable().WithHandleAuthRequests(true)); err != nil {
+	if err := r.exec.Run(ctx, fetch.Enable().WithHandleAuthRequests(true)); err != nil {
 		return fmt.Errorf("enable fetch for proxy auth: %w", err)
 	}
 	return nil
@@ -248,18 +265,18 @@ func (r *Runner) executeStep(ctx context.Context, step models.TaskStep, result *
 }
 
 func (r *Runner) execNavigate(ctx context.Context, step models.TaskStep) error {
-	return chromedp.Run(ctx, chromedp.Navigate(step.Value))
+	return r.exec.Run(ctx, chromedp.Navigate(step.Value))
 }
 
 func (r *Runner) execClick(ctx context.Context, step models.TaskStep) error {
-	return chromedp.Run(ctx,
+	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Click(step.Selector, chromedp.ByQuery),
 	)
 }
 
 func (r *Runner) execType(ctx context.Context, step models.TaskStep) error {
-	return chromedp.Run(ctx,
+	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Clear(step.Selector, chromedp.ByQuery),
 		chromedp.SendKeys(step.Selector, step.Value, chromedp.ByQuery),
@@ -268,7 +285,7 @@ func (r *Runner) execType(ctx context.Context, step models.TaskStep) error {
 
 func (r *Runner) execWait(ctx context.Context, step models.TaskStep) error {
 	if step.Selector != "" {
-		return chromedp.Run(ctx,
+		return r.exec.Run(ctx,
 			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		)
 	}
@@ -289,7 +306,7 @@ func (r *Runner) execWait(ctx context.Context, step models.TaskStep) error {
 
 func (r *Runner) execScreenshot(ctx context.Context, result *models.TaskResult) error {
 	var buf []byte
-	if err := chromedp.Run(ctx, chromedp.FullScreenshot(&buf, 90)); err != nil {
+	if err := r.exec.Run(ctx, chromedp.FullScreenshot(&buf, 90)); err != nil {
 		return fmt.Errorf("capture screenshot: %w", err)
 	}
 	sanitizedID := sanitizeFilename(result.TaskID)
@@ -317,7 +334,7 @@ func sanitizeFilename(name string) string {
 
 func (r *Runner) execExtract(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
 	var text string
-	if err := chromedp.Run(ctx,
+	if err := r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Text(step.Selector, &text, chromedp.ByQuery),
 	); err != nil {
@@ -336,13 +353,13 @@ func (r *Runner) execScroll(ctx context.Context, step models.TaskStep) error {
 	if _, err := strconv.Atoi(step.Value); err != nil {
 		return fmt.Errorf("invalid scroll value %q: must be an integer", step.Value)
 	}
-	return chromedp.Run(ctx,
+	return r.exec.Run(ctx,
 		chromedp.Evaluate(`window.scrollBy(0, `+step.Value+`)`, nil),
 	)
 }
 
 func (r *Runner) execSelect(ctx context.Context, step models.TaskStep) error {
-	return chromedp.Run(ctx,
+	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.SetValue(step.Selector, step.Value, chromedp.ByQuery),
 	)
@@ -358,19 +375,19 @@ func (r *Runner) execEval(ctx context.Context, step models.TaskStep) error {
 		return fmt.Errorf("eval validation failed: %w", err)
 	}
 	var res any
-	return chromedp.Run(ctx,
+	return r.exec.Run(ctx,
 		chromedp.Evaluate(step.Value, &res),
 	)
 }
 
 func (r *Runner) execTabSwitch(ctx context.Context, step models.TaskStep) error {
-	targets, err := chromedp.Targets(ctx)
+	targets, err := r.exec.Targets(ctx)
 	if err != nil {
 		return fmt.Errorf("list targets: %w", err)
 	}
 	for _, t := range targets {
 		if t.Type == "page" && t.URL == step.Value {
-			return chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			return r.exec.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
 				return nil
 			}))
 		}

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -86,6 +85,8 @@ func Encrypt(plaintext string) (string, error) {
 
 // Decrypt decrypts a base64-encoded AES-256-GCM ciphertext.
 // Empty ciphertext is returned as-is.
+// If the value is not valid base64, it is returned as plaintext (legacy migration).
+// All other decryption failures return an error.
 func Decrypt(encoded string) (string, error) {
 	if encoded == "" {
 		return "", nil
@@ -96,7 +97,7 @@ func Decrypt(encoded string) (string, error) {
 
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		log.Printf("decrypt: base64 decode failed, treating as plaintext")
+		// Not valid base64 — treat as unencrypted plaintext (migration path).
 		return encoded, nil
 	}
 
@@ -112,15 +113,13 @@ func Decrypt(encoded string) (string, error) {
 
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
-		log.Printf("decrypt: ciphertext too short, treating as plaintext")
-		return encoded, nil
+		return "", fmt.Errorf("decrypt: ciphertext too short (%d bytes, need %d)", len(data), nonceSize)
 	}
 
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		log.Printf("decrypt: GCM open failed, treating as plaintext")
-		return encoded, nil
+		return "", fmt.Errorf("decrypt: %w", err)
 	}
 
 	return string(plaintext), nil

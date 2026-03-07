@@ -406,3 +406,55 @@ func TestFullLifecycle(t *testing.T) {
 		}
 	}
 }
+
+// --- SetCallback Tests ---
+
+func TestSetCallbackAndInvoke(t *testing.T) {
+	logger := NewWebSocketLogger("ws-callback-1")
+
+	var received []models.WebSocketLog
+	var mu sync.Mutex
+	logger.SetCallback(func(log models.WebSocketLog) {
+		mu.Lock()
+		defer mu.Unlock()
+		received = append(received, log)
+	})
+
+	// Trigger a WebSocket event that fires the callback
+	logger.HandleFrameReceived(&network.EventWebSocketFrameReceived{
+		RequestID: "ws-callback-1",
+		Timestamp: nil,
+		Response: &network.WebSocketFrame{
+			Opcode:      1,
+			PayloadData: "callback test data",
+		},
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 1 {
+		t.Fatalf("expected 1 callback invocation, got %d", len(received))
+	}
+	if received[0].PayloadSnippet != "callback test data" {
+		t.Errorf("unexpected payload: %q", received[0].PayloadSnippet)
+	}
+}
+
+func TestSetCallbackNil(t *testing.T) {
+	logger := NewWebSocketLogger("ws-callback-nil")
+
+	// Set callback then set to nil - should not panic
+	logger.SetCallback(func(log models.WebSocketLog) {
+		t.Fatal("should not be called after nil override")
+	})
+	logger.SetCallback(nil)
+
+	logger.HandleFrameReceived(&network.EventWebSocketFrameReceived{
+		RequestID: "ws-callback-nil",
+		Timestamp: nil,
+		Response: &network.WebSocketFrame{
+			Opcode:      1,
+			PayloadData: "no callback",
+		},
+	})
+}

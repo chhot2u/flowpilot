@@ -2,13 +2,22 @@ package recorder
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"flowpilot/internal/logs"
 	"flowpilot/internal/models"
+
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/cdproto/target"
+	"github.com/chromedp/chromedp"
 )
 
 func TestRecordStep(t *testing.T) {
@@ -410,5 +419,772 @@ func TestRankSelectorsEqualScores(t *testing.T) {
 		if r.Score != 50 {
 			t.Errorf("unexpected score: %d", r.Score)
 		}
+	}
+}
+
+type mockCDP struct {
+	mu          sync.Mutex
+	runCalls    int
+	runErr      error
+	runErrAt    int
+	listenCalls int
+}
+
+func (m *mockCDP) Run(ctx context.Context, actions ...chromedp.Action) error {
+	m.mu.Lock()
+	m.runCalls++
+	n := m.runCalls
+	m.mu.Unlock()
+	if m.runErrAt > 0 && n == m.runErrAt {
+		return m.runErr
+	}
+	if m.runErrAt == 0 && m.runErr != nil {
+		return m.runErr
+	}
+	return nil
+}
+
+func (m *mockCDP) ListenTarget(ctx context.Context, fn func(ev any)) {
+	m.mu.Lock()
+	m.listenCalls++
+	m.mu.Unlock()
+}
+
+func (m *mockCDP) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runCalls
+}
+
+func TestSetWSCallback(t *testing.T) {
+	r := New(context.Background(), "flow-wscb", nil)
+	r.wsLogger = logs.NewWebSocketLogger("flow-wscb")
+
+	called := false
+	r.SetWSCallback(func(ev models.WebSocketLog) {
+		called = true
+	})
+	_ = called
+}
+
+func TestSetWSCallbackNilLogger(t *testing.T) {
+	r := New(context.Background(), "flow-wscb-nil", nil)
+	r.SetWSCallback(func(ev models.WebSocketLog) {})
+}
+
+func TestEnableDomainsSuccess(t *testing.T) {
+	mock := &mockCDP{}
+	r := &Recorder{
+		flowID:     "flow-ed",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.enableDomains()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.calls() != 4 {
+		t.Fatalf("expected 4 Run calls, got %d", mock.calls())
+	}
+}
+
+func TestEnableDomainsRuntimeFail(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("runtime err"), runErrAt: 1}
+	r := &Recorder{
+		flowID:     "flow-ed-fail",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.enableDomains()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "enable runtime domain") {
+		t.Errorf("expected runtime domain error, got: %v", err)
+	}
+}
+
+func TestEnableDomainsPageFail(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("page err"), runErrAt: 2}
+	r := &Recorder{
+		flowID:     "flow-ed-page",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.enableDomains()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "enable page domain") {
+		t.Errorf("expected page domain error, got: %v", err)
+	}
+}
+
+func TestEnableDomainsNetworkFail(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("net err"), runErrAt: 3}
+	r := &Recorder{
+		flowID:     "flow-ed-net",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.enableDomains()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "enable network domain") {
+		t.Errorf("expected network domain error, got: %v", err)
+	}
+}
+
+func TestEnableDomainsBindingFail(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("binding err"), runErrAt: 4}
+	r := &Recorder{
+		flowID:     "flow-ed-bind",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.enableDomains()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "add binding") {
+		t.Errorf("expected binding error, got: %v", err)
+	}
+}
+
+func TestInstallCaptureScriptSuccess(t *testing.T) {
+	mock := &mockCDP{}
+	r := &Recorder{
+		flowID:     "flow-ics",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.installCaptureScript()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.calls() != 1 {
+		t.Fatalf("expected 1 Run call, got %d", mock.calls())
+	}
+}
+
+func TestInstallCaptureScriptError(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("install err")}
+	r := &Recorder{
+		flowID:     "flow-ics-err",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.installCaptureScript()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "install capture script") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+}
+
+func TestInjectCaptureScriptSuccess(t *testing.T) {
+	mock := &mockCDP{}
+	r := &Recorder{
+		flowID:     "flow-inject",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.injectCaptureScript()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInjectCaptureScriptError(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("inject err")}
+	r := &Recorder{
+		flowID:     "flow-inject-err",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	err := r.injectCaptureScript()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRegisterListeners(t *testing.T) {
+	mock := &mockCDP{}
+	r := &Recorder{
+		flowID:     "flow-rl",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	r.registerListeners()
+	if mock.listenCalls != 1 {
+		t.Fatalf("expected 1 ListenTarget call, got %d", mock.listenCalls)
+	}
+}
+
+func TestHandleEventBindingCalled(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-he-bind",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&runtime.EventBindingCalled{
+		Name:    bindingName,
+		Payload: `{"action":"click","selector":"#btn","value":""}`,
+	})
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 captured step, got %d", len(captured))
+	}
+	if captured[0].Action != models.ActionClick {
+		t.Errorf("expected click action, got %q", captured[0].Action)
+	}
+}
+
+func TestHandleEventBindingCalledWrongName(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-he-wrong",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&runtime.EventBindingCalled{
+		Name:    "otherBinding",
+		Payload: `{"action":"click","selector":"#btn","value":""}`,
+	})
+
+	if len(captured) != 0 {
+		t.Fatalf("expected no captured steps, got %d", len(captured))
+	}
+}
+
+func TestHandleEventFrameNavigated(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-he-nav",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&page.EventFrameNavigated{
+		Frame: &cdp.Frame{
+			URL: "https://example.com",
+		},
+	})
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 captured step, got %d", len(captured))
+	}
+	if captured[0].Action != models.ActionNavigate {
+		t.Errorf("expected navigate action, got %q", captured[0].Action)
+	}
+	if captured[0].Value != "https://example.com" {
+		t.Errorf("expected URL in value, got %q", captured[0].Value)
+	}
+}
+
+func TestHandleEventFrameNavigatedSubframe(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-he-sub",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&page.EventFrameNavigated{
+		Frame: &cdp.Frame{
+			ParentID: "parent-frame",
+			URL:      "https://example.com/iframe",
+		},
+	})
+
+	if len(captured) != 0 {
+		t.Fatal("should not record subframe navigation")
+	}
+}
+
+func TestHandleEventFrameNavigatedNilFrame(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-he-nilf",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&page.EventFrameNavigated{Frame: nil})
+
+	if len(captured) != 0 {
+		t.Fatal("should not record when frame is nil")
+	}
+}
+
+func TestHandleEventTargetInfoChangedTabSwitch(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID:      "flow-he-tab",
+		activeTabID: target.ID("tab-1"),
+		cdp:         &mockCDP{},
+	}
+
+	r.handleEvent(&target.EventTargetInfoChanged{
+		TargetInfo: &target.Info{
+			TargetID: target.ID("tab-2"),
+			Type:     "page",
+			URL:      "https://other.com",
+		},
+	})
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 captured step, got %d", len(captured))
+	}
+	if captured[0].Action != models.ActionTabSwitch {
+		t.Errorf("expected tab_switch action, got %q", captured[0].Action)
+	}
+}
+
+func TestHandleEventTargetInfoChangedSameTab(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID:      "flow-he-same",
+		activeTabID: target.ID("tab-1"),
+		cdp:         &mockCDP{},
+	}
+
+	r.handleEvent(&target.EventTargetInfoChanged{
+		TargetInfo: &target.Info{
+			TargetID: target.ID("tab-1"),
+			Type:     "page",
+			URL:      "https://example.com",
+		},
+	})
+
+	if len(captured) != 0 {
+		t.Fatal("should not record when same tab")
+	}
+}
+
+func TestHandleEventTargetInfoChangedInitialTab(t *testing.T) {
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {},
+		flowID:  "flow-he-init",
+		cdp:     &mockCDP{},
+	}
+
+	r.handleEvent(&target.EventTargetInfoChanged{
+		TargetInfo: &target.Info{
+			TargetID: target.ID("tab-1"),
+			Type:     "page",
+			URL:      "https://example.com",
+		},
+	})
+
+	if r.activeTabID != target.ID("tab-1") {
+		t.Errorf("expected activeTabID to be set, got %q", r.activeTabID)
+	}
+}
+
+func TestHandleEventTargetInfoChangedNilInfo(t *testing.T) {
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {},
+		flowID:  "flow-he-nil-info",
+		cdp:     &mockCDP{},
+	}
+
+	r.handleEvent(&target.EventTargetInfoChanged{TargetInfo: nil})
+}
+
+func TestHandleEventTargetInfoChangedNonPage(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID:      "flow-he-nonpage",
+		activeTabID: target.ID("tab-1"),
+		cdp:         &mockCDP{},
+	}
+
+	r.handleEvent(&target.EventTargetInfoChanged{
+		TargetInfo: &target.Info{
+			TargetID: target.ID("sw-1"),
+			Type:     "service_worker",
+			URL:      "https://example.com/sw.js",
+		},
+	})
+
+	if len(captured) != 0 {
+		t.Fatal("should not record non-page target changes")
+	}
+}
+
+func TestHandleEventNetworkRequest(t *testing.T) {
+	r := &Recorder{
+		flowID:    "flow-he-net",
+		netLogger: logs.NewNetworkLogger("flow-he-net"),
+		cdp:       &mockCDP{},
+	}
+
+	r.handleEvent(&network.EventRequestWillBeSent{
+		RequestID: "req-1",
+		Request:   &network.Request{URL: "https://example.com/api"},
+	})
+
+	r.handleEvent(&network.EventResponseReceived{
+		RequestID: "req-1",
+		Response:  &network.Response{URL: "https://example.com/api", Status: 200},
+	})
+
+	r.handleEvent(&network.EventLoadingFinished{
+		RequestID: "req-1",
+	})
+
+	netLogs := r.NetworkLogs()
+	if len(netLogs) != 1 {
+		t.Fatalf("expected 1 network log, got %d", len(netLogs))
+	}
+}
+
+func TestHandleEventNetworkResponse(t *testing.T) {
+	r := &Recorder{
+		flowID:    "flow-he-resp",
+		netLogger: logs.NewNetworkLogger("flow-he-resp"),
+		cdp:       &mockCDP{},
+	}
+
+	r.handleEvent(&network.EventRequestWillBeSent{
+		RequestID: "req-1",
+		Request:   &network.Request{URL: "https://example.com/api"},
+	})
+
+	r.handleEvent(&network.EventResponseReceived{
+		RequestID: "req-1",
+		Response:  &network.Response{URL: "https://example.com/api", Status: 200},
+	})
+}
+
+func TestHandleEventNetworkLoadingFinished(t *testing.T) {
+	r := &Recorder{
+		flowID:    "flow-he-load",
+		netLogger: logs.NewNetworkLogger("flow-he-load"),
+		cdp:       &mockCDP{},
+	}
+
+	r.handleEvent(&network.EventLoadingFinished{
+		RequestID: "req-1",
+	})
+}
+
+func TestHandleEventWebSocket(t *testing.T) {
+	r := &Recorder{
+		flowID:   "flow-he-ws",
+		wsLogger: logs.NewWebSocketLogger("flow-he-ws"),
+		cdp:      &mockCDP{},
+	}
+
+	r.handleEvent(&network.EventWebSocketCreated{
+		RequestID: "ws-1",
+		URL:       "wss://example.com/ws",
+	})
+	r.handleEvent(&network.EventWebSocketHandshakeResponseReceived{
+		RequestID: "ws-1",
+	})
+	r.handleEvent(&network.EventWebSocketFrameSent{
+		RequestID: "ws-1",
+		Response:  &network.WebSocketFrame{PayloadData: "hello"},
+	})
+	r.handleEvent(&network.EventWebSocketFrameReceived{
+		RequestID: "ws-1",
+		Response:  &network.WebSocketFrame{PayloadData: "world"},
+	})
+	r.handleEvent(&network.EventWebSocketClosed{
+		RequestID: "ws-1",
+	})
+	r.handleEvent(&network.EventWebSocketFrameError{
+		RequestID:    "ws-1",
+		ErrorMessage: "connection reset",
+	})
+
+	wsLogs := r.WebSocketLogs()
+	if len(wsLogs) == 0 {
+		t.Fatal("expected ws logs")
+	}
+}
+
+func TestHandleEventNilLoggers(t *testing.T) {
+	r := &Recorder{
+		flowID: "flow-he-nillog",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleEvent(&network.EventRequestWillBeSent{
+		RequestID: "req-1",
+		Request:   &network.Request{URL: "https://example.com"},
+	})
+	r.handleEvent(&network.EventResponseReceived{
+		RequestID: "req-1",
+	})
+	r.handleEvent(&network.EventLoadingFinished{RequestID: "req-1"})
+	r.handleEvent(&network.EventWebSocketCreated{RequestID: "ws-1"})
+	r.handleEvent(&network.EventWebSocketHandshakeResponseReceived{RequestID: "ws-1"})
+	r.handleEvent(&network.EventWebSocketFrameSent{RequestID: "ws-1"})
+	r.handleEvent(&network.EventWebSocketFrameReceived{RequestID: "ws-1"})
+	r.handleEvent(&network.EventWebSocketClosed{RequestID: "ws-1"})
+	r.handleEvent(&network.EventWebSocketFrameError{RequestID: "ws-1"})
+}
+
+func TestHandleEventUnknownType(t *testing.T) {
+	r := &Recorder{
+		flowID: "flow-he-unknown",
+		cdp:    &mockCDP{},
+	}
+	r.handleEvent("some unknown event type")
+}
+
+func TestStartSuccess(t *testing.T) {
+	mock := &mockCDP{}
+	r := &Recorder{
+		parentCtx: context.Background(),
+		flowID:    "flow-start",
+		handler:   func(step models.RecordedStep) {},
+		cdp:       mock,
+	}
+
+	r.allocCtx, r.allocCancel = context.WithCancel(r.parentCtx)
+	r.browserCtx, r.browserCancel = context.WithCancel(r.allocCtx)
+	r.netLogger = logs.NewNetworkLogger(r.flowID)
+	r.wsLogger = logs.NewWebSocketLogger(r.flowID)
+
+	err := r.enableDomains()
+	if err != nil {
+		t.Fatalf("enableDomains: %v", err)
+	}
+
+	err = r.installCaptureScript()
+	if err != nil {
+		t.Fatalf("installCaptureScript: %v", err)
+	}
+
+	err = r.injectCaptureScript()
+	if err != nil {
+		t.Fatalf("injectCaptureScript: %v", err)
+	}
+
+	if mock.calls() != 6 {
+		t.Fatalf("expected 6 Run calls, got %d", mock.calls())
+	}
+
+	r.Stop()
+}
+
+func TestStartEnableDomainsError(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("enable fail"), runErrAt: 1}
+	r := &Recorder{
+		parentCtx: context.Background(),
+		flowID:    "flow-start-err",
+		handler:   func(step models.RecordedStep) {},
+		cdp:       mock,
+	}
+
+	r.allocCtx, r.allocCancel = context.WithCancel(r.parentCtx)
+	r.browserCtx, r.browserCancel = context.WithCancel(r.allocCtx)
+	r.netLogger = logs.NewNetworkLogger(r.flowID)
+	r.wsLogger = logs.NewWebSocketLogger(r.flowID)
+
+	err := r.enableDomains()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	r.Stop()
+}
+
+func TestCaptureSnapshotWithMock(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockCDP{}
+	s := &Snapshotter{outputDir: dir, cdp: mock}
+
+	snap, err := s.CaptureSnapshot(context.Background(), "flow-snap", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.FlowID != "flow-snap" {
+		t.Errorf("expected FlowID 'flow-snap', got %q", snap.FlowID)
+	}
+	if snap.StepIndex != 0 {
+		t.Errorf("expected StepIndex 0, got %d", snap.StepIndex)
+	}
+	if !strings.HasPrefix(snap.ScreenshotPath, dir) {
+		t.Errorf("screenshot path not under output dir: %s", snap.ScreenshotPath)
+	}
+	if snap.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if mock.calls() != 2 {
+		t.Fatalf("expected 2 Run calls (capture + location), got %d", mock.calls())
+	}
+}
+
+func TestCaptureSnapshotRunError(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockCDP{runErr: errors.New("capture err")}
+	s := &Snapshotter{outputDir: dir, cdp: mock}
+
+	_, err := s.CaptureSnapshot(context.Background(), "flow-snap-err", 0)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "capture dom snapshot") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+}
+
+func TestCaptureSnapshotWriteError(t *testing.T) {
+	mock := &mockCDP{}
+	s := &Snapshotter{outputDir: "/nonexistent/dir/that/should/not/exist", cdp: mock}
+
+	_, err := s.CaptureSnapshot(context.Background(), "flow-snap-write", 0)
+	if err == nil {
+		t.Fatal("expected write error")
+	}
+	if !strings.Contains(err.Error(), "write snapshot") {
+		t.Errorf("expected 'write snapshot' error, got: %v", err)
+	}
+}
+
+func TestRecordStepWithSnapshotter(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockCDP{}
+
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID:     "flow-rs-snap",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	s := &Snapshotter{outputDir: dir, cdp: mock}
+	r.SetSnapshotter(s)
+
+	r.RecordStep(models.ActionClick, "#btn", "")
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(captured))
+	}
+	if captured[0].SnapshotID == "" {
+		t.Error("expected non-empty SnapshotID when snapshotter is set")
+	}
+}
+
+func TestRecordStepWithSnapshotterError(t *testing.T) {
+	mock := &mockCDP{runErr: errors.New("snap fail")}
+
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID:     "flow-rs-snap-err",
+		browserCtx: context.Background(),
+		cdp:        mock,
+	}
+
+	s := &Snapshotter{outputDir: t.TempDir(), cdp: mock}
+	r.SetSnapshotter(s)
+
+	r.RecordStep(models.ActionClick, "#btn", "")
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(captured))
+	}
+	if captured[0].SnapshotID != "" {
+		t.Error("expected empty SnapshotID when snapshot fails")
+	}
+}
+
+func TestHandleBindingCallInvalid(t *testing.T) {
+	var captured []models.RecordedStep
+	r := &Recorder{
+		handler: func(step models.RecordedStep) {
+			captured = append(captured, step)
+		},
+		flowID: "flow-hbc-bad",
+		cdp:    &mockCDP{},
+	}
+
+	r.handleBindingCall("not valid json")
+
+	if len(captured) != 0 {
+		t.Fatal("should not record step for invalid payload")
+	}
+}
+
+func TestNewCreatesDefaultCDP(t *testing.T) {
+	r := New(context.Background(), "flow-default-cdp", nil)
+	if r.cdp == nil {
+		t.Fatal("expected non-nil cdp client")
+	}
+}
+
+func TestSnapshotterHasCDP(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSnapshotter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.cdp == nil {
+		t.Fatal("expected non-nil cdp client on snapshotter")
+	}
+}
+
+func TestCaptureSnapshotSanitizesFlowID(t *testing.T) {
+	dir := t.TempDir()
+	mock := &mockCDP{}
+	s := &Snapshotter{outputDir: dir, cdp: mock}
+
+	snap, err := s.CaptureSnapshot(context.Background(), "flow/with.dots\\and/slashes", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	filename := filepath.Base(snap.ScreenshotPath)
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || strings.Contains(filename, "..") {
+		t.Errorf("filename not properly sanitized: %s", filename)
+	}
+
+	if _, err := os.Stat(snap.ScreenshotPath); err != nil {
+		t.Errorf("screenshot file should exist: %v", err)
 	}
 }

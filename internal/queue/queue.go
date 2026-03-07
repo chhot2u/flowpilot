@@ -240,6 +240,12 @@ func (q *Queue) executeTask(ctx context.Context, task models.Task) {
 
 	result, err := q.runner.RunTask(taskCtx, task)
 
+	if result != nil && len(result.StepLogs) > 0 {
+		if slErr := q.db.InsertStepLogs(task.ID, result.StepLogs); slErr != nil {
+			q.emitEvent(task.ID, task.Status, fmt.Sprintf("persist step logs: %v", slErr))
+		}
+	}
+
 	if selectedProxyID != "" {
 		if pm := q.getProxyManager(); pm != nil {
 			if recordErr := pm.RecordUsage(selectedProxyID, err == nil); recordErr != nil {

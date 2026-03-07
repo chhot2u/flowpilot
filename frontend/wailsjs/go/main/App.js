@@ -137,3 +137,35 @@ export function StartRecording(arg1) {
 export function StopRecording() {
   return window['go']['main']['App']['StopRecording']();
 }
+
+export function GetAuditTrail(arg1, arg2) {
+  return window['go']['main']['App']['GetAuditTrail'](arg1, arg2);
+}
+
+export function ListTasksPaginated(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListTasksPaginated'](arg1, arg2, arg3, arg4);
+}
+
+export function ListWebSocketLogs(arg1) {
+  return window['go']['main']['App']['ListWebSocketLogs'](arg1);
+}
+
+export function PlayRecordedFlow(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PlayRecordedFlow'](arg1, arg2, arg3);
+}
+
+export function ParseBatchURLs(arg1, arg2) {
+  return window['go']['main']['App']['ParseBatchURLs'](arg1, arg2);
+}
+
+export function PurgeOldData(arg1) {
+  return window['go']['main']['App']['PurgeOldData'](arg1);
+}
+
+export function UpdateRecordedFlow(arg1) {
+  return window['go']['main']['App']['UpdateRecordedFlow'](arg1);
+}
+
+export function ListTaskEvents(arg1) {
+  return window['go']['main']['App']['ListTaskEvents'](arg1);
+}

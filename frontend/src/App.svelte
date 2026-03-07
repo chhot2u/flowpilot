@@ -29,7 +29,7 @@
     try {
       loadError = '';
       const list = await ListTasks();
-      tasks.set((list || []) as unknown as Task[]);
+      tasks.set((list || []) as Task[]);
     } catch (err: any) {
       loadError = `Failed to load tasks: ${err?.message || err}`;
     } finally {

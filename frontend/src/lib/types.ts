@@ -7,6 +7,12 @@ export interface TaskStep {
   timeout?: number;
 }
 
+export interface SelectorCandidate {
+  selector: string;
+  strategy: string;
+  score: number;
+}
+
 export interface RecordedStep {
   index: number;
   action: string;
@@ -14,6 +20,7 @@ export interface RecordedStep {
   value?: string;
   timeout?: number;
   snapshotId?: string;
+  selectorCandidates?: SelectorCandidate[];
   timestamp: string;
 }
 
@@ -122,4 +129,33 @@ export interface TaskEvent {
   status: TaskStatus;
   error?: string;
   log?: LogEntry;
+}
+
+export interface DOMSnapshot {
+  id: string;
+  flowId: string;
+  stepIndex: number;
+  html: string;
+  screenshotPath: string;
+  url: string;
+  capturedAt: string;
+}
+
+export interface TaskLifecycleEvent {
+  id: string;
+  taskId: string;
+  batchId: string;
+  fromState: string;
+  toState: string;
+  error: string;
+  timestamp: string;
+}
+
+export interface QueueMetrics {
+  pending: number;
+  running: number;
+  completed: number;
+  failed: number;
+  avgDuration: number;
+  throughput: number;
 }

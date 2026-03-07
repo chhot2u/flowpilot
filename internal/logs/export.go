@@ -65,12 +65,16 @@ func (e *Exporter) ExportBatchLogs(batchID string) (string, error) {
 	return zipPath, nil
 }
 
-func writeJSONL(path string, stepLogs []models.StepLog, networkLogs []models.NetworkLog) error {
+func writeJSONL(path string, stepLogs []models.StepLog, networkLogs []models.NetworkLog) (retErr error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create jsonl: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if cErr := file.Close(); cErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close jsonl: %w", cErr)
+		}
+	}()
 	enc := json.NewEncoder(file)
 	for _, log := range stepLogs {
 		if err := enc.Encode(log); err != nil {
@@ -85,12 +89,16 @@ func writeJSONL(path string, stepLogs []models.StepLog, networkLogs []models.Net
 	return nil
 }
 
-func writeCSV(path string, stepLogs []models.StepLog, networkLogs []models.NetworkLog) error {
+func writeCSV(path string, stepLogs []models.StepLog, networkLogs []models.NetworkLog) (retErr error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create csv: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if cErr := file.Close(); cErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close csv: %w", cErr)
+		}
+	}()
 
 	writer := csv.NewWriter(file)
 	if err := writer.Write([]string{"type", "taskId", "stepIndex", "action", "selector", "value", "snapshotId", "errorCode", "errorMsg", "durationMs", "timestamp", "url", "method", "statusCode", "mimeType"}); err != nil {
@@ -116,15 +124,23 @@ func writeCSV(path string, stepLogs []models.StepLog, networkLogs []models.Netwo
 	return nil
 }
 
-func writeBatchZip(path string, db *database.DB, tasks []models.Task) error {
+func writeBatchZip(path string, db *database.DB, tasks []models.Task) (retErr error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create zip: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if cErr := file.Close(); cErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close zip file: %w", cErr)
+		}
+	}()
 
 	zipWriter := zip.NewWriter(file)
-	defer zipWriter.Close()
+	defer func() {
+		if cErr := zipWriter.Close(); cErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close zip writer: %w", cErr)
+		}
+	}()
 
 	for _, task := range tasks {
 		stepLogs, err := db.ListStepLogs(task.ID)

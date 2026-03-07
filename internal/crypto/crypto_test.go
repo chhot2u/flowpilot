@@ -192,28 +192,22 @@ func TestDecryptWithoutKeyFails(t *testing.T) {
 	}
 }
 
-func TestDecryptShortCiphertextFallback(t *testing.T) {
+func TestDecryptShortCiphertextReturnsError(t *testing.T) {
 	setupTestKey(t)
 
-	result, err := Decrypt("YWI=")
-	if err != nil {
-		t.Fatalf("Decrypt short: %v", err)
-	}
-	if result != "YWI=" {
-		t.Errorf("expected fallback to original for short ciphertext, got %q", result)
+	_, err := Decrypt("YWI=")
+	if err == nil {
+		t.Fatal("expected error for short ciphertext, got nil")
 	}
 }
 
-func TestDecryptInvalidGCMFallback(t *testing.T) {
+func TestDecryptInvalidGCMReturnsError(t *testing.T) {
 	setupTestKey(t)
 
 	encoded := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	result, err := Decrypt(encoded)
-	if err != nil {
-		t.Fatalf("Decrypt invalid GCM: %v", err)
-	}
-	if result != encoded {
-		t.Errorf("expected fallback to original for invalid GCM, got %q", result)
+	_, err := Decrypt(encoded)
+	if err == nil {
+		t.Fatal("expected error for invalid GCM data, got nil")
 	}
 }
 

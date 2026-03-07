@@ -579,3 +579,96 @@ func TestWriteJSONLToWriterMultiple(t *testing.T) {
 		t.Errorf("expected 8 JSON lines (5 steps + 3 nets), got %d", count)
 	}
 }
+
+func TestNewExporterInvalidPath(t *testing.T) {
+	// /proc/... is a read-only filesystem on Linux, MkdirAll should fail
+	_, err := NewExporter(nil, "/proc/fakedir/exports")
+	if err == nil {
+		t.Error("expected error for unwritable path")
+	}
+}
+
+func TestWriteBatchZipInvalidPath(t *testing.T) {
+	tasks := []models.Task{{ID: "zip-err-1"}}
+	err := writeBatchZip("/proc/fakedir/batch.zip", nil, tasks)
+	if err == nil {
+		t.Error("expected error for unwritable zip path")
+	}
+}
+
+func TestExportBatchLogsVerifyZipContents(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	task := models.Task{
+		ID:        "batch-verify-1",
+		Name:      "Batch Verify",
+		URL:       "https://example.com",
+		Status:    models.TaskStatusCompleted,
+		BatchID:   "batch-verify",
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	stepLogs := []models.StepLog{
+		{TaskID: "batch-verify-1", StepIndex: 0, Action: models.ActionClick, Selector: "#go", DurationMs: 30, StartedAt: time.Now()},
+	}
+	if err := db.InsertStepLogs("batch-verify-1", stepLogs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	networkLogs := []models.NetworkLog{
+		{TaskID: "batch-verify-1", StepIndex: 0, RequestURL: "https://example.com/api", Method: "GET", StatusCode: 200, DurationMs: 100, Timestamp: time.Now()},
+	}
+	if err := db.InsertNetworkLogs("batch-verify-1", networkLogs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	zipPath, err := exporter.ExportBatchLogs("batch-verify")
+	if err != nil {
+		t.Fatalf("ExportBatchLogs: %v", err)
+	}
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 2 {
+		t.Fatalf("expected 2 files in zip (1 JSONL + 1 CSV), got %d", len(r.File))
+	}
+
+	// Verify JSONL content inside zip
+	for _, f := range r.File {
+		if strings.HasSuffix(f.Name, ".jsonl") {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open zip entry: %v", err)
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			if len(data) == 0 {
+				t.Error("JSONL zip entry should not be empty")
+			}
+		}
+		if strings.HasSuffix(f.Name, ".csv") {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open zip entry: %v", err)
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			if len(data) == 0 {
+				t.Error("CSV zip entry should not be empty")
+			}
+		}
+	}
+}

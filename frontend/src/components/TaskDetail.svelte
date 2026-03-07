@@ -59,7 +59,7 @@
       editError = '';
       const tags = editTags.split(',').map(t => t.trim()).filter(t => t.length > 0);
       await UpdateTask($selectedTask.id, editName, editUrl, editSteps, proxyConfig, editPriority, tags);
-      const updated = await GetTask($selectedTask.id) as unknown as Task;
+      const updated = await GetTask($selectedTask.id) as Task;
       tasks.update(list => list.map(t => t.id === updated.id ? updated : t));
       editing = false;
     } catch (err: any) {
