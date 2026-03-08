@@ -92,6 +92,14 @@ export interface Task {
   headless?: boolean;
 }
 
+export interface PaginatedTasks {
+  tasks: Task[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface Proxy {
   id: string;
   server: string;

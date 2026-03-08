@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ListRecordedFlows, DeleteRecordedFlow } from '../../wailsjs/go/main/App';
+  import { ListRecordedFlows, DeleteRecordedFlow, PlayRecordedFlow } from '../../wailsjs/go/main/App';
   import { recordedFlows } from '../lib/store';
   import { createEventDispatcher, onMount } from 'svelte';
 
@@ -7,6 +7,7 @@
 
   let loading = false;
   let errorMessage = '';
+  let playingFlowId = '';
 
   async function refresh() {
     loading = true;
@@ -22,11 +23,24 @@
   }
 
   async function removeFlow(id: string) {
+    if (!confirm('Delete this recorded flow?')) return;
     try {
       await DeleteRecordedFlow(id);
       await refresh();
     } catch (err: any) {
       errorMessage = err?.message || String(err);
+    }
+  }
+
+  async function playFlow(id: string, originUrl: string) {
+    playingFlowId = id;
+    try {
+      errorMessage = '';
+      await PlayRecordedFlow(id, originUrl, true);
+    } catch (err: any) {
+      errorMessage = err?.message || String(err);
+    } finally {
+      playingFlowId = '';
     }
   }
 
@@ -57,6 +71,9 @@
           </div>
           <div class="actions">
             <button class="btn-primary btn-sm" on:click={() => dispatch('use', flow)}>Use</button>
+            <button class="btn-success btn-sm" on:click={() => playFlow(flow.id, flow.originUrl)} disabled={playingFlowId === flow.id}>
+              {playingFlowId === flow.id ? '...' : '▶ Play'}
+            </button>
             <button class="btn-danger btn-sm" on:click={() => removeFlow(flow.id)}>Delete</button>
           </div>
         </div>

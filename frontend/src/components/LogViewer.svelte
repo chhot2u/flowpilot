@@ -11,8 +11,8 @@
     if (!task) return;
     exporting = true;
     try {
-      const [jsonlPath, csvPath] = await ExportTaskLogs(task.id);
-      exportMessage = `Exported: ${jsonlPath}, ${csvPath}`;
+      const zipPath = await ExportTaskLogs(task.id);
+      exportMessage = `Exported: ${zipPath}`;
     } catch (err: any) {
       exportMessage = err?.message || String(err);
     } finally {

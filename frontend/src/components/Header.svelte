@@ -1,14 +1,16 @@
 <script lang="ts">
   import { taskStats } from '../lib/store';
-  import { GetRunningCount } from '../../wailsjs/go/main/App';
+  import { GetRunningCount, GetQueueMetrics } from '../../wailsjs/go/main/App';
 
   let runningCount = 0;
+  let queuedCount = 0;
 
-  // Poll running count
   const interval = setInterval(async () => {
     try {
       runningCount = await GetRunningCount();
-    } catch (_) { /* polling failure is non-critical */ }
+      const metrics = await GetQueueMetrics();
+      queuedCount = metrics.queued || 0;
+    } catch (_) {}
   }, 2000);
 
   import { onDestroy } from 'svelte';
@@ -28,6 +30,10 @@
     <div class="stat running">
       <span class="stat-value">{runningCount}</span>
       <span class="stat-label">Running</span>
+    </div>
+    <div class="stat queued">
+      <span class="stat-value">{queuedCount}</span>
+      <span class="stat-label">Queued</span>
     </div>
     <div class="stat success">
       <span class="stat-value">{$taskStats.completed}</span>
@@ -85,4 +91,5 @@
   .running .stat-value { color: var(--accent); }
   .success .stat-value { color: var(--success); }
   .danger .stat-value { color: var(--danger); }
+  .queued .stat-value { color: var(--warning); }
 </style>

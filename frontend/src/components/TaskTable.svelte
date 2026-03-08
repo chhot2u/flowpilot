@@ -7,16 +7,14 @@
   const dispatch = createEventDispatcher();
 
   let actionError = '';
-  let busyTaskIds = new Set<string>();
+  let busyTaskIds: string[] = [];
 
   function markBusy(id: string) {
-    busyTaskIds.add(id);
-    busyTaskIds = busyTaskIds; // trigger reactivity
+    busyTaskIds = [...busyTaskIds, id];
   }
 
   function unmarkBusy(id: string) {
-    busyTaskIds.delete(id);
-    busyTaskIds = busyTaskIds; // trigger reactivity
+    busyTaskIds = busyTaskIds.filter(x => x !== id);
   }
 
   function selectTask(task: Task) {
@@ -70,7 +68,11 @@
   function formatDate(dateStr: string): string {
     if (!dateStr) return '-';
     const d = new Date(dateStr);
-    return d.toLocaleTimeString();
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString();
+    }
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
 
   function shortId(id: string): string {

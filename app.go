@@ -466,28 +466,27 @@ func (a *App) CreateTaskFromFlow(flowID, name, url string, proxyConfig models.Pr
 	return a.CreateTask(name, url, steps, proxyConfig, priority, autoStart, tags)
 }
 
-// CreateBatchFromFlow creates batch tasks from a flow and returns the batch group.
-func (a *App) CreateBatchFromFlow(input models.AdvancedBatchInput) (models.BatchGroup, []models.Task, error) {
+func (a *App) CreateBatchFromFlow(input models.AdvancedBatchInput) (models.BatchGroup, error) {
 	if err := a.ready(); err != nil {
-		return models.BatchGroup{}, nil, err
+		return models.BatchGroup{}, err
 	}
 	if a.batchEngine == nil {
-		return models.BatchGroup{}, nil, fmt.Errorf("batch engine unavailable")
+		return models.BatchGroup{}, fmt.Errorf("batch engine unavailable")
 	}
 	flow, err := a.db.GetRecordedFlow(input.FlowID)
 	if err != nil {
-		return models.BatchGroup{}, nil, fmt.Errorf("get flow: %w", err)
+		return models.BatchGroup{}, fmt.Errorf("get flow: %w", err)
 	}
 	group, tasks, err := a.batchEngine.CreateBatchFromFlow(a.ctx, *flow, input)
 	if err != nil {
-		return models.BatchGroup{}, nil, err
+		return models.BatchGroup{}, err
 	}
 	if input.AutoStart {
 		if err := a.queue.SubmitBatch(a.ctx, tasks); err != nil {
-			return group, tasks, fmt.Errorf("submit batch: %w", err)
+			return group, fmt.Errorf("submit batch: %w", err)
 		}
 	}
-	return group, tasks, nil
+	return group, nil
 }
 
 // GetBatchProgress returns summary status for a batch.
@@ -537,15 +536,14 @@ func (a *App) RetryFailedBatch(batchID string) ([]models.Task, error) {
 	return failed, nil
 }
 
-// ExportTaskLogs exports logs for a task and returns file paths.
-func (a *App) ExportTaskLogs(taskID string) (string, string, error) {
+func (a *App) ExportTaskLogs(taskID string) (string, error) {
 	if err := a.ready(); err != nil {
-		return "", "", err
+		return "", err
 	}
 	if a.logExporter == nil {
-		return "", "", fmt.Errorf("log exporter unavailable")
+		return "", fmt.Errorf("log exporter unavailable")
 	}
-	return a.logExporter.ExportTaskLogs(taskID)
+	return a.logExporter.ExportTaskLogsZip(taskID)
 }
 
 // ExportBatchLogs exports logs for a batch as a ZIP file.

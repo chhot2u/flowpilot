@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CreateBatchFromFlow } from '../../wailsjs/go/main/App';
+  import { CreateBatchFromFlow, ParseBatchURLs } from '../../wailsjs/go/main/App';
   import type { RecordedFlow } from '../lib/types';
   import { createEventDispatcher } from 'svelte';
 
@@ -50,11 +50,14 @@
     if (!input.files || input.files.length === 0) return;
     const file = input.files[0];
     const text = await file.text();
-    const lines = text.split(/\r?\n/).map(line => line.split(',')[0]?.trim()).filter(Boolean);
-    if (lines.length === 0) return;
-    const existing = parseUrls();
-    const merged = Array.from(new Set([...existing, ...lines]));
-    urlList = merged.join('\n');
+    try {
+      const parsed = await ParseBatchURLs(text, true);
+      const existing = parseUrls();
+      const merged = Array.from(new Set([...existing, ...parsed]));
+      urlList = merged.join('\n');
+    } catch (err: any) {
+      errorMessage = err?.message || String(err);
+    }
     input.value = '';
   }
 </script>

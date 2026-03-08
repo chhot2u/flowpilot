@@ -12,9 +12,9 @@
   import BatchFromFlow from './components/BatchFromFlow.svelte';
   import LogViewer from './components/LogViewer.svelte';
   import BatchProgressPanel from './components/BatchProgressPanel.svelte';
-  import { tasks, activeTab, updateTaskInStore, selectedTask } from './lib/store';
+  import { tasks, activeTab, updateTaskInStore, replaceTaskInStore, selectedTask, statusFilter, tagFilter, isRecording, recordedFlows } from './lib/store';
   import type { Task } from './lib/types';
-  import { ListTasks } from '../wailsjs/go/main/App';
+  import { ListTasksPaginated, GetTask, IsRecording, ListRecordedFlows } from '../wailsjs/go/main/App';
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
   let showCreateModal = false;
@@ -23,13 +23,17 @@
   let loading = false;
   let selectedFlow: any = null;
   let showBatchFromFlow = false;
+  let currentPage = 1;
+  let pageSize = 50;
+
 
   async function refreshTasks() {
     loading = true;
     try {
       loadError = '';
-      const list = await ListTasks();
-      tasks.set((list || []) as Task[]);
+      const result = await ListTasksPaginated(currentPage, pageSize, $statusFilter === 'all' ? 'all' : $statusFilter, $tagFilter);
+      tasks.set((result.tasks || []) as Task[]);
+
     } catch (err: any) {
       loadError = `Failed to load tasks: ${err?.message || err}`;
     } finally {
@@ -37,12 +41,28 @@
     }
   }
 
-  onMount(() => {
+  async function refreshFlows() {
+    try {
+      const flows = await ListRecordedFlows();
+      recordedFlows.set(flows || []);
+    } catch (_) {}
+  }
+
+  onMount(async () => {
+    try {
+      const recording = await IsRecording();
+      isRecording.set(recording);
+    } catch (_) {}
+
     refreshTasks();
 
-    EventsOn('task:event', (event: any) => {
+    EventsOn('task:event', async (event: any) => {
       updateTaskInStore(event);
       if (['completed', 'failed', 'cancelled'].includes(event.status)) {
+        try {
+          const full = await GetTask(event.taskId) as Task;
+          replaceTaskInStore(full);
+        } catch (_) {}
         refreshTasks();
       }
     });
@@ -101,7 +121,7 @@
     <ProxyPanel />
   {:else if $activeTab === 'recorder'}
     <div class="main-content">
-      <RecorderPanel on:saved={() => {}} />
+      <RecorderPanel on:saved={refreshFlows} />
       <div class="side-panel">
         <FlowManager on:use={(e) => { selectedFlow = e.detail; showBatchFromFlow = true; }} />
       </div>

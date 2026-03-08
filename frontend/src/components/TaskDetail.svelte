@@ -1,7 +1,7 @@
 <script lang="ts">
   import { selectedTask, tasks } from '../lib/store';
-  import { UpdateTask, GetTask } from '../../wailsjs/go/main/App';
-  import type { Task, TaskStep, ProxyConfig } from '../lib/types';
+  import { UpdateTask, GetTask, ListTaskEvents } from '../../wailsjs/go/main/App';
+  import type { Task, TaskStep, ProxyConfig, TaskLifecycleEvent } from '../lib/types';
 
   let editing = false;
   let editName = '';
@@ -15,6 +15,8 @@
   let editTags = '';
   let editError = '';
   let saving = false;
+  let auditEvents: TaskLifecycleEvent[] = [];
+  let auditLoading = false;
 
   const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select'];
 
@@ -76,6 +78,25 @@
     const ms = ns / 1000000;
     if (ms < 1000) return `${ms.toFixed(0)}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  async function loadAudit() {
+    if (!$selectedTask) return;
+    auditLoading = true;
+    try {
+      const events = await ListTaskEvents($selectedTask.id);
+      auditEvents = (events || []) as TaskLifecycleEvent[];
+    } catch (_) {
+      auditEvents = [];
+    } finally {
+      auditLoading = false;
+    }
+  }
+
+  $: if ($selectedTask) {
+    loadAudit();
+  } else {
+    auditEvents = [];
   }
 </script>
 
@@ -260,6 +281,25 @@
         {/if}
       </div>
     {/if}
+
+    {#if auditLoading}
+      <div class="detail-section"><p style="font-size:11px;color:var(--text-muted)">Loading audit...</p></div>
+    {:else if auditEvents.length > 0}
+      <div class="detail-section">
+        <h4>Audit Trail ({auditEvents.length})</h4>
+        <div class="audit-list">
+          {#each auditEvents as evt}
+            <div class="audit-entry">
+              <span class="badge badge-{evt.toState}">{evt.toState}</span>
+              <span class="audit-from">{evt.fromState} →</span>
+              {#if evt.error}
+                <span class="audit-error">{evt.error}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {:else}
     <div class="empty-detail">
       <p>Select a task to view details</p>
@@ -269,7 +309,7 @@
 
 <style>
   .detail-panel {
-    width: 380px;
+    width: 100%;
     background: var(--bg-secondary);
     border-left: 1px solid var(--border);
     overflow-y: auto;
@@ -436,5 +476,27 @@
     border-radius: 10px;
     font-size: 11px;
     font-weight: 500;
+  }
+  .audit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .audit-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  .audit-from {
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .audit-error {
+    color: var(--danger);
+    font-size: 10px;
   }
 </style>

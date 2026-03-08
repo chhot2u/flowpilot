@@ -46,6 +46,7 @@
   }
 
   async function removeProxy(id: string) {
+    if (!confirm('Delete this proxy?')) return;
     try {
       loadError = '';
       await DeleteProxy(id);

@@ -672,3 +672,124 @@ func TestExportBatchLogsVerifyZipContents(t *testing.T) {
 		}
 	}
 }
+
+func TestExportTaskLogsZip(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	task := models.Task{
+		ID:        "zip-task-1",
+		Name:      "Zip Export Test",
+		URL:       "https://example.com",
+		Status:    models.TaskStatusCompleted,
+		CreatedAt: time.Now(),
+	}
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	stepLogs := []models.StepLog{
+		{TaskID: "zip-task-1", StepIndex: 0, Action: models.ActionNavigate, Value: "https://example.com", DurationMs: 100, StartedAt: time.Now()},
+	}
+	if err := db.InsertStepLogs("zip-task-1", stepLogs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+
+	networkLogs := []models.NetworkLog{
+		{TaskID: "zip-task-1", StepIndex: 0, RequestURL: "https://example.com", Method: "GET", StatusCode: 200, DurationMs: 50, Timestamp: time.Now()},
+	}
+	if err := db.InsertNetworkLogs("zip-task-1", networkLogs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	zipPath, err := exporter.ExportTaskLogsZip("zip-task-1")
+	if err != nil {
+		t.Fatalf("ExportTaskLogsZip: %v", err)
+	}
+
+	if zipPath == "" {
+		t.Fatal("zipPath should not be empty")
+	}
+	if !strings.HasSuffix(zipPath, ".zip") {
+		t.Errorf("expected .zip extension, got %q", zipPath)
+	}
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 2 {
+		t.Fatalf("expected 2 files in zip (1 JSONL + 1 CSV), got %d", len(r.File))
+	}
+
+	var hasJSONL, hasCSV bool
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open zip entry %q: %v", f.Name, err)
+		}
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		if len(data) == 0 {
+			t.Errorf("zip entry %q should not be empty", f.Name)
+		}
+		if strings.HasSuffix(f.Name, ".jsonl") {
+			hasJSONL = true
+		}
+		if strings.HasSuffix(f.Name, ".csv") {
+			hasCSV = true
+		}
+	}
+	if !hasJSONL {
+		t.Error("zip should contain a .jsonl file")
+	}
+	if !hasCSV {
+		t.Error("zip should contain a .csv file")
+	}
+}
+
+func TestExportTaskLogsZipNoData(t *testing.T) {
+	db := setupTestDB(t)
+	dir := t.TempDir()
+
+	exporter, err := NewExporter(db, filepath.Join(dir, "exports"))
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	zipPath, err := exporter.ExportTaskLogsZip("nonexistent")
+	if err != nil {
+		t.Fatalf("ExportTaskLogsZip: %v", err)
+	}
+
+	if zipPath == "" {
+		t.Fatal("zipPath should not be empty even for no data")
+	}
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 2 {
+		t.Fatalf("expected 2 files in zip (empty JSONL + header-only CSV), got %d", len(r.File))
+	}
+}
+
+func TestExportTaskLogsZipInvalidPath(t *testing.T) {
+	db := setupTestDB(t)
+
+	exporter := &Exporter{db: db, output: "/proc/fakedir"}
+	_, err := exporter.ExportTaskLogsZip("task-1")
+	if err == nil {
+		t.Error("expected error for unwritable path")
+	}
+}

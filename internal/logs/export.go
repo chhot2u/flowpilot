@@ -52,6 +52,45 @@ func (e *Exporter) ExportTaskLogs(taskID string) (string, string, error) {
 	return jsonlPath, csvPath, nil
 }
 
+func (e *Exporter) ExportTaskLogsZip(taskID string) (string, error) {
+	stepLogs, err := e.db.ListStepLogs(taskID)
+	if err != nil {
+		return "", err
+	}
+	networkLogs, err := e.db.ListNetworkLogs(taskID)
+	if err != nil {
+		return "", err
+	}
+
+	zipPath := filepath.Join(e.output, fmt.Sprintf("task_%s_%d.zip", taskID, time.Now().Unix()))
+	file, err := os.Create(zipPath)
+	if err != nil {
+		return "", fmt.Errorf("create task zip: %w", err)
+	}
+	defer file.Close()
+
+	zipWriter := zip.NewWriter(file)
+	defer zipWriter.Close()
+
+	jsonlFile, err := zipWriter.Create(fmt.Sprintf("task_%s.jsonl", taskID))
+	if err != nil {
+		return "", fmt.Errorf("create zip jsonl: %w", err)
+	}
+	if err := writeJSONLToWriter(jsonlFile, stepLogs, networkLogs); err != nil {
+		return "", err
+	}
+
+	csvFile, err := zipWriter.Create(fmt.Sprintf("task_%s.csv", taskID))
+	if err != nil {
+		return "", fmt.Errorf("create zip csv: %w", err)
+	}
+	if err := writeCSVToWriter(csvFile, stepLogs, networkLogs); err != nil {
+		return "", err
+	}
+
+	return zipPath, nil
+}
+
 // ExportBatchLogs exports logs for all tasks in a batch and returns the ZIP path.
 func (e *Exporter) ExportBatchLogs(batchID string) (string, error) {
 	tasks, err := e.db.ListTasksByBatch(batchID)

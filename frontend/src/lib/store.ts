@@ -58,7 +58,6 @@ export const taskStats = derived(tasks, ($tasks) => {
   return stats;
 });
 
-// Update a single task in the store
 export function updateTaskInStore(event: TaskEvent) {
   tasks.update(list => 
     list.map(t => 
@@ -66,5 +65,11 @@ export function updateTaskInStore(event: TaskEvent) {
         ? { ...t, status: event.status, error: event.error || t.error }
         : t
     )
+  );
+}
+
+export function replaceTaskInStore(updated: Task) {
+  tasks.update(list =>
+    list.map(t => t.id === updated.id ? updated : t)
   );
 }
