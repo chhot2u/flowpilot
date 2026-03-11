@@ -10,6 +10,11 @@ import (
 	"github.com/chromedp/cdproto/network"
 )
 
+const (
+	MaxNetworkLogEntries = 10_000
+	MaxPendingRequests   = 5_000
+)
+
 // NetworkLogger captures HAR-like network timing logs.
 type NetworkLogger struct {
 	mu         sync.Mutex
@@ -19,6 +24,7 @@ type NetworkLogger struct {
 	requests   map[network.RequestID]*network.Request
 	responses  map[network.RequestID]*network.Response
 	logs       []models.NetworkLog
+	dropped    int
 }
 
 // NewNetworkLogger creates a network logger for a task.
@@ -43,6 +49,9 @@ func (n *NetworkLogger) SetStepIndex(stepIndex int) {
 func (n *NetworkLogger) HandleRequestWillBeSent(ev *network.EventRequestWillBeSent) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if len(n.startTimes) >= MaxPendingRequests {
+		return
+	}
 	n.startTimes[ev.RequestID] = time.Now()
 	n.requests[ev.RequestID] = ev.Request
 }
@@ -69,6 +78,12 @@ func (n *NetworkLogger) HandleLoadingFinished(ev *network.EventLoadingFinished, 
 		resp = response
 	}
 	if resp == nil || req == nil {
+		return
+	}
+	if len(n.logs) >= MaxNetworkLogEntries {
+		n.dropped++
+		delete(n.requests, ev.RequestID)
+		delete(n.responses, ev.RequestID)
 		return
 	}
 	log := models.NetworkLog{

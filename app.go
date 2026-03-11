@@ -32,7 +32,7 @@ type AppConfig struct {
 
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
-		QueueConcurrency:    100,
+		QueueConcurrency:    10,
 		RetentionDays:       90,
 		HealthCheckInterval: 300,
 		MaxProxyFailures:    3,

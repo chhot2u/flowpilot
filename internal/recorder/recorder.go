@@ -49,8 +49,7 @@ func (r *Recorder) Start(url string) error {
 	opts = append(opts,
 		chromedp.Flag("headless", false),
 		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("enable-unsafe-swiftshader", true),
 	)
 
 	r.allocCtx, r.allocCancel = chromedp.NewExecAllocator(r.parentCtx, opts...)
@@ -203,6 +202,11 @@ func (r *Recorder) handleBindingCall(payload string) {
 }
 
 func (r *Recorder) Stop() {
+	if r.browserCtx != nil {
+		gracefulCtx, gracefulCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = chromedp.Cancel(gracefulCtx)
+		gracefulCancel()
+	}
 	if r.browserCancel != nil {
 		r.browserCancel()
 		r.browserCancel = nil
