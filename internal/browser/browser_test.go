@@ -14,6 +14,7 @@ import (
 	"flowpilot/internal/logs"
 	"flowpilot/internal/models"
 
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
@@ -629,11 +630,13 @@ func TestSetForceHeadless(t *testing.T) {
 }
 
 type mockExecutor struct {
-	mu      sync.Mutex
-	calls   []string
-	runErr  error
-	targErr error
-	targets []*target.Info
+	mu          sync.Mutex
+	calls       []string
+	runErr      error
+	targErr     error
+	targets     []*target.Info
+	runResponse *network.Response
+	runRespErr  error
 }
 
 func (m *mockExecutor) Run(ctx context.Context, actions ...chromedp.Action) error {
@@ -641,6 +644,19 @@ func (m *mockExecutor) Run(ctx context.Context, actions ...chromedp.Action) erro
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, fmt.Sprintf("Run(%d actions)", len(actions)))
 	return m.runErr
+}
+
+func (m *mockExecutor) RunResponse(ctx context.Context, actions ...chromedp.Action) (*network.Response, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, fmt.Sprintf("RunResponse(%d actions)", len(actions)))
+	if m.runRespErr != nil {
+		return nil, m.runRespErr
+	}
+	if m.runErr != nil {
+		return nil, m.runErr
+	}
+	return m.runResponse, nil
 }
 
 func (m *mockExecutor) Targets(ctx context.Context) ([]*target.Info, error) {
@@ -1219,6 +1235,14 @@ func (c *callCountExecutor) Run(ctx context.Context, actions ...chromedp.Action)
 	return c.onCall(n)
 }
 
+func (c *callCountExecutor) RunResponse(ctx context.Context, actions ...chromedp.Action) (*network.Response, error) {
+	c.mu.Lock()
+	c.count++
+	n := c.count
+	c.mu.Unlock()
+	return nil, c.onCall(n)
+}
+
 func (c *callCountExecutor) Targets(ctx context.Context) ([]*target.Info, error) {
 	return nil, nil
 }
@@ -1320,5 +1344,55 @@ func TestExecuteStepEvalWithMock(t *testing.T) {
 	err := r.executeStep(context.Background(), step, result)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecNavigateHTTPStatus404(t *testing.T) {
+	mock := &mockExecutor{
+		runResponse: &network.Response{Status: 404, StatusText: "Not Found"},
+	}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Value: "https://example.com/missing"})
+	if err == nil {
+		t.Fatal("expected error for HTTP 404")
+	}
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("expected HTTP 404 in error, got: %v", err)
+	}
+}
+
+func TestExecNavigateHTTPStatus200(t *testing.T) {
+	mock := &mockExecutor{
+		runResponse: &network.Response{Status: 200, StatusText: "OK"},
+	}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecNavigateNilResponse(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error for nil response: %v", err)
+	}
+}
+
+func TestExecNavigateRunResponseError(t *testing.T) {
+	mock := &mockExecutor{runRespErr: errors.New("connection refused")}
+	r := newMockRunner(t, mock)
+
+	err := r.execNavigate(context.Background(), models.TaskStep{Value: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("expected 'connection refused', got: %v", err)
 	}
 }
