@@ -148,7 +148,7 @@ func (db *DB) CreateTaskTx(ctx context.Context, tx *sql.Tx, task models.Task) er
 }
 
 func (db *DB) GetTask(ctx context.Context, id string) (*models.Task, error) {
-	row := db.conn.QueryRowContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	row := db.readConn.QueryRowContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE id = ?`, id)
 	task, err := db.scanTask(row)
@@ -159,7 +159,7 @@ func (db *DB) GetTask(ctx context.Context, id string) (*models.Task, error) {
 }
 
 func (db *DB) ListTasks(ctx context.Context) ([]models.Task, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
@@ -182,7 +182,7 @@ func (db *DB) ListTasks(ctx context.Context) ([]models.Task, error) {
 }
 
 func (db *DB) ListTasksByStatus(ctx context.Context, status models.TaskStatus) ([]models.Task, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`, status)
 	if err != nil {
@@ -369,7 +369,7 @@ func (db *DB) DeleteTask(ctx context.Context, id string) error {
 }
 
 func (db *DB) GetTaskStats(ctx context.Context) (map[string]int, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks GROUP BY status`)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks GROUP BY status`)
 	if err != nil {
 		return nil, fmt.Errorf("query task stats: %w", err)
 	}
@@ -412,7 +412,7 @@ func (db *DB) ListTasksPaginated(ctx context.Context, page, pageSize int, status
 
 	var total int
 	countQuery := "SELECT COUNT(*) FROM tasks " + where
-	if err := db.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := db.readConn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return models.PaginatedTasks{}, fmt.Errorf("count tasks: %w", err)
 	}
 
@@ -426,7 +426,7 @@ func (db *DB) ListTasksPaginated(ctx context.Context, page, pageSize int, status
 	queryArgs = append(queryArgs, args...)
 	queryArgs = append(queryArgs, pageSize, offset)
 
-	rows, err := db.conn.QueryContext(ctx, query, queryArgs...)
+	rows, err := db.readConn.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return models.PaginatedTasks{}, fmt.Errorf("query paginated tasks: %w", err)
 	}
@@ -456,7 +456,7 @@ func (db *DB) ListTasksPaginated(ctx context.Context, page, pageSize int, status
 // ListStaleTasks returns tasks stuck in "running" or "queued" status.
 // These are typically left over from a previous crash and need recovery.
 func (db *DB) ListStaleTasks(ctx context.Context) ([]models.Task, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE status IN (?, ?) ORDER BY priority DESC, created_at ASC`,
 		models.TaskStatusRunning, models.TaskStatusQueued)
@@ -477,4 +477,32 @@ func (db *DB) ListStaleTasks(ctx context.Context) ([]models.Task, error) {
 		return nil, fmt.Errorf("iterate stale tasks: %w", err)
 	}
 	return tasks, nil
+}
+
+// BatchUpdateTaskStatus updates the status of multiple tasks in a single transaction.
+func (db *DB) BatchUpdateTaskStatus(ctx context.Context, taskIDs []string, status models.TaskStatus, errMsg string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin batch status tx: %w", err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `UPDATE tasks SET status = ?, error = ? WHERE id = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare batch status update: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, id := range taskIDs {
+		if _, err := stmt.ExecContext(ctx, status, errMsg, id); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("batch update task %s: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit batch status update: %w", err)
+	}
+	return nil
 }

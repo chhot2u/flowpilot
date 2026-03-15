@@ -18,7 +18,7 @@ func (db *DB) InsertTaskEvent(ctx context.Context, event models.TaskLifecycleEve
 }
 
 func (db *DB) ListTaskEvents(ctx context.Context, taskID string) ([]models.TaskLifecycleEvent, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, task_id, batch_id, from_state, to_state, error, timestamp FROM task_events WHERE task_id = ? ORDER BY timestamp ASC`, taskID)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, task_id, batch_id, from_state, to_state, error, timestamp FROM task_events WHERE task_id = ? ORDER BY timestamp ASC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list task events: %w", err)
 	}
@@ -67,7 +67,7 @@ func (db *DB) InsertStepLogs(ctx context.Context, taskID string, logs []models.S
 }
 
 func (db *DB) ListStepLogs(ctx context.Context, taskID string) ([]models.StepLog, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT task_id, step_index, action, selector, value, snapshot_id, error_code, error_msg, duration_ms, started_at
+	rows, err := db.readConn.QueryContext(ctx, `SELECT task_id, step_index, action, selector, value, snapshot_id, error_code, error_msg, duration_ms, started_at
 		FROM step_logs WHERE task_id = ? ORDER BY step_index ASC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list step logs: %w", err)
@@ -117,7 +117,7 @@ func (db *DB) InsertNetworkLogs(ctx context.Context, taskID string, logs []model
 }
 
 func (db *DB) ListNetworkLogs(ctx context.Context, taskID string) ([]models.NetworkLog, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT task_id, step_index, request_url, method, status_code, mime_type, request_headers, response_headers, request_size, response_size, duration_ms, error, timestamp
+	rows, err := db.readConn.QueryContext(ctx, `SELECT task_id, step_index, request_url, method, status_code, mime_type, request_headers, response_headers, request_size, response_size, duration_ms, error, timestamp
 		FROM network_logs WHERE task_id = ? ORDER BY timestamp ASC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list network logs: %w", err)
@@ -167,7 +167,7 @@ func (db *DB) InsertWebSocketLogs(ctx context.Context, flowID string, logs []mod
 }
 
 func (db *DB) ListWebSocketLogs(ctx context.Context, flowID string) ([]models.WebSocketLog, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT flow_id, step_index, request_id, url, event_type, direction, opcode, payload_size, payload_snippet, close_code, close_reason, error_message, timestamp
+	rows, err := db.readConn.QueryContext(ctx, `SELECT flow_id, step_index, request_id, url, event_type, direction, opcode, payload_size, payload_snippet, close_code, close_reason, error_message, timestamp
 		FROM websocket_logs WHERE flow_id = ? ORDER BY timestamp ASC`, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("list websocket logs: %w", err)
@@ -203,7 +203,7 @@ func (db *DB) ListAuditTrail(ctx context.Context, taskID string, limit int) ([]m
 		query += fmt.Sprintf(` LIMIT %d`, limit)
 	}
 
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	rows, err := db.readConn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list audit trail: %w", err)
 	}

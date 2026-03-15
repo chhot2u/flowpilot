@@ -20,11 +20,14 @@ import (
 	"flowpilot/internal/recorder"
 	"flowpilot/internal/scheduler"
 
+	"github.com/chromedp/chromedp"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type AppConfig struct {
 	QueueConcurrency    int
+	BrowserPoolSize     int
+	BrowserMaxTabs      int
 	RetentionDays       int
 	HealthCheckInterval int
 	MaxProxyFailures    int
@@ -32,7 +35,9 @@ type AppConfig struct {
 
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
-		QueueConcurrency:    10,
+		QueueConcurrency:    50,
+		BrowserPoolSize:     20,
+		BrowserMaxTabs:      15,
 		RetentionDays:       90,
 		HealthCheckInterval: 300,
 		MaxProxyFailures:    3,
@@ -43,6 +48,7 @@ type App struct {
 	ctx          context.Context
 	db           *database.DB
 	runner       *browser.Runner
+	pool         *browser.BrowserPool
 	queue        *queue.Queue
 	proxyManager *proxy.Manager
 	scheduler    *scheduler.Scheduler
@@ -108,6 +114,13 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.runner = runner
+
+	pool := browser.NewBrowserPool(browser.PoolConfig{
+		Size:    a.config.BrowserPoolSize,
+		MaxTabs: a.config.BrowserMaxTabs,
+	}, chromedp.DefaultExecAllocatorOptions[:])
+	a.pool = pool
+	a.runner.SetPool(pool)
 
 	captchaConfig, err := a.db.GetActiveCaptchaConfig(a.ctx)
 	if err == nil && captchaConfig != nil {
@@ -189,6 +202,9 @@ func (a *App) cleanup() {
 	}
 	if a.queue != nil {
 		a.queue.Stop()
+	}
+	if a.pool != nil {
+		a.pool.Stop()
 	}
 	if a.proxyManager != nil {
 		a.proxyManager.Stop()

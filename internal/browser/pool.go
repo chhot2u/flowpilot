@@ -11,7 +11,7 @@ import (
 
 const (
 	DefaultPoolSize   = 5
-	MaxPoolSize       = 50
+	MaxPoolSize       = 200
 	PoolIdleTimeout   = 5 * time.Minute
 	PoolDialTimeout   = 30 * time.Second
 	PoolCleanupPeriod = 30 * time.Second
@@ -26,21 +26,24 @@ type pooledBrowser struct {
 }
 
 type BrowserPool struct {
-	mu          sync.Mutex
-	browsers    []*pooledBrowser
-	poolSize    int
-	maxTabs     int
-	idleTimeout time.Duration
-	opts        []chromedp.ExecAllocatorOption
-	stopped     bool
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
+	mu             sync.Mutex
+	cond           *sync.Cond
+	browsers       []*pooledBrowser
+	poolSize       int
+	maxTabs        int
+	idleTimeout    time.Duration
+	acquireTimeout time.Duration
+	opts           []chromedp.ExecAllocatorOption
+	stopped        bool
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
 }
 
 type PoolConfig struct {
-	Size        int
-	MaxTabs     int
-	IdleTimeout time.Duration
+	Size           int
+	MaxTabs        int
+	IdleTimeout    time.Duration
+	AcquireTimeout time.Duration
 }
 
 func NewBrowserPool(cfg PoolConfig, opts []chromedp.ExecAllocatorOption) *BrowserPool {
@@ -57,14 +60,21 @@ func NewBrowserPool(cfg PoolConfig, opts []chromedp.ExecAllocatorOption) *Browse
 		cfg.IdleTimeout = PoolIdleTimeout
 	}
 
-	p := &BrowserPool{
-		browsers:    make([]*pooledBrowser, 0, cfg.Size),
-		poolSize:    cfg.Size,
-		maxTabs:     cfg.MaxTabs,
-		idleTimeout: cfg.IdleTimeout,
-		opts:        opts,
-		stopCh:      make(chan struct{}),
+	acquireTimeout := cfg.AcquireTimeout
+	if acquireTimeout <= 0 {
+		acquireTimeout = 60 * time.Second
 	}
+
+	p := &BrowserPool{
+		browsers:       make([]*pooledBrowser, 0, cfg.Size),
+		poolSize:       cfg.Size,
+		maxTabs:        cfg.MaxTabs,
+		idleTimeout:    cfg.IdleTimeout,
+		acquireTimeout: acquireTimeout,
+		opts:           opts,
+		stopCh:         make(chan struct{}),
+	}
+	p.cond = sync.NewCond(&p.mu)
 
 	p.wg.Add(1)
 	go p.cleanupLoop()
@@ -93,6 +103,7 @@ func (p *BrowserPool) Acquire(ctx context.Context) (browserCtx context.Context, 
 				p.mu.Lock()
 				b.inUse--
 				b.lastUsed = time.Now()
+				p.cond.Signal()
 				p.mu.Unlock()
 			}
 			return tabCtx, release, nil
@@ -117,13 +128,59 @@ func (p *BrowserPool) Acquire(ctx context.Context) (browserCtx context.Context, 
 			p.mu.Lock()
 			b.inUse--
 			b.lastUsed = time.Now()
+			p.cond.Signal()
 			p.mu.Unlock()
 		}
 		return tabCtx, release, nil
 	}
 
-	p.mu.Unlock()
-	return nil, nil, fmt.Errorf("browser pool exhausted: all %d browsers at max tab capacity", p.poolSize)
+	// Wait for a slot to become available (with timeout).
+	deadline := time.Now().Add(p.acquireTimeout)
+	for {
+		if p.stopped {
+			p.mu.Unlock()
+			return nil, nil, fmt.Errorf("browser pool is stopped")
+		}
+
+		// Check context deadline.
+		if d, ok := ctx.Deadline(); ok && time.Now().After(d) {
+			p.mu.Unlock()
+			return nil, nil, fmt.Errorf("browser pool acquire: context deadline exceeded")
+		}
+		if time.Now().After(deadline) {
+			p.mu.Unlock()
+			return nil, nil, fmt.Errorf("browser pool acquire: timeout after %s", p.acquireTimeout)
+		}
+
+		// Wait for a signal (with a periodic wake-up to check timeout).
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			p.cond.Broadcast()
+		}()
+		p.cond.Wait()
+
+		// Re-check for available slot.
+		for _, b := range p.browsers {
+			if b.inUse < b.maxTabs {
+				b.inUse++
+				b.lastUsed = time.Now()
+				allocCtx := b.allocCtx
+				p.mu.Unlock()
+
+				tabCtx, tabCancel := chromedp.NewContext(allocCtx,
+					chromedp.WithNewBrowserContext())
+				release = func() {
+					tabCancel()
+					p.mu.Lock()
+					b.inUse--
+					b.lastUsed = time.Now()
+					p.cond.Signal()
+					p.mu.Unlock()
+				}
+				return tabCtx, release, nil
+			}
+		}
+	}
 }
 
 func (p *BrowserPool) createBrowser(ctx context.Context) (*pooledBrowser, error) {
@@ -191,6 +248,7 @@ func (p *BrowserPool) Stop() {
 		b.allocCancel()
 	}
 	p.browsers = nil
+	p.cond.Broadcast()
 	p.mu.Unlock()
 
 	close(p.stopCh)

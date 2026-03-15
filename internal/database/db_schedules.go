@@ -93,7 +93,7 @@ func (db *DB) CreateSchedule(ctx context.Context, s models.Schedule) error {
 }
 
 func (db *DB) GetSchedule(ctx context.Context, id string) (*models.Schedule, error) {
-	row := db.conn.QueryRowContext(ctx, `
+	row := db.readConn.QueryRowContext(ctx, `
 		SELECT id, name, cron_expr, flow_id, url, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, headless, tags, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM schedules WHERE id = ?`, id)
 	s, err := db.scanSchedule(row)
@@ -104,7 +104,7 @@ func (db *DB) GetSchedule(ctx context.Context, id string) (*models.Schedule, err
 }
 
 func (db *DB) ListSchedules(ctx context.Context) ([]models.Schedule, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.readConn.QueryContext(ctx, `
 		SELECT id, name, cron_expr, flow_id, url, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, headless, tags, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM schedules ORDER BY created_at DESC`)
 	if err != nil {
@@ -187,7 +187,7 @@ func (db *DB) DeleteSchedule(ctx context.Context, id string) error {
 }
 
 func (db *DB) ListDueSchedules(ctx context.Context, now time.Time) ([]models.Schedule, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.readConn.QueryContext(ctx, `
 		SELECT id, name, cron_expr, flow_id, url, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol, priority, headless, tags, enabled, last_run_at, next_run_at, created_at, updated_at
 		FROM schedules WHERE enabled = 1 AND next_run_at <= ?
 		ORDER BY next_run_at ASC`, now)

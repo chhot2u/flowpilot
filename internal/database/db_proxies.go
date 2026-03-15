@@ -59,7 +59,7 @@ func (db *DB) CreateProxy(ctx context.Context, proxy models.Proxy) error {
 }
 
 func (db *DB) ListProxies(ctx context.Context) ([]models.Proxy, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, server, protocol, username, password, geo, status, latency, success_rate, total_used, last_checked, created_at
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, server, protocol, username, password, geo, status, latency, success_rate, total_used, last_checked, created_at
 		FROM proxies ORDER BY success_rate DESC, latency ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query proxies: %w", err)
@@ -81,7 +81,7 @@ func (db *DB) ListProxies(ctx context.Context) ([]models.Proxy, error) {
 }
 
 func (db *DB) ListHealthyProxies(ctx context.Context) ([]models.Proxy, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, server, protocol, username, password, geo, status, latency, success_rate, total_used, last_checked, created_at
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, server, protocol, username, password, geo, status, latency, success_rate, total_used, last_checked, created_at
 		FROM proxies WHERE status = 'healthy' ORDER BY success_rate DESC, latency ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query healthy proxies: %w", err)

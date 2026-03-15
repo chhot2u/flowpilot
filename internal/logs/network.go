@@ -31,10 +31,10 @@ type NetworkLogger struct {
 func NewNetworkLogger(taskID string) *NetworkLogger {
 	return &NetworkLogger{
 		taskID:     taskID,
-		startTimes: make(map[network.RequestID]time.Time),
-		requests:   make(map[network.RequestID]*network.Request),
-		responses:  make(map[network.RequestID]*network.Response),
-		logs:       []models.NetworkLog{},
+		startTimes: make(map[network.RequestID]time.Time, 64),
+		requests:   make(map[network.RequestID]*network.Request, 64),
+		responses:  make(map[network.RequestID]*network.Response, 64),
+		logs:       make([]models.NetworkLog, 0, 128),
 	}
 }
 

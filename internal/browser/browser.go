@@ -67,6 +67,7 @@ type Runner struct {
 	forceHeadless atomic.Bool
 	exec          Executor
 	captchaSolver captcha.Solver
+	pool          *BrowserPool
 }
 
 // NewRunner creates a new browser runner. Eval steps are blocked by default.
@@ -94,6 +95,11 @@ func (r *Runner) SetAllowEval(allow bool) {
 	r.allowEval.Store(allow)
 }
 
+// SetPool attaches a browser pool for reusing Chrome processes across tasks.
+func (r *Runner) SetPool(p *BrowserPool) {
+	r.pool = p
+}
+
 // RunTask executes a single task with its own browser context and proxy.
 func (r *Runner) RunTask(ctx context.Context, task models.Task) (*models.TaskResult, error) {
 	start := time.Now()
@@ -102,10 +108,26 @@ func (r *Runner) RunTask(ctx context.Context, task models.Task) (*models.TaskRes
 		ExtractedData: make(map[string]string),
 	}
 
-	allocCtx, allocCancel := r.createAllocator(ctx, task.Proxy, task.Headless)
-	defer allocCancel()
+	var browserCtx context.Context
+	var browserCancel context.CancelFunc
+	var poolRelease func()
 
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	if r.pool != nil && task.Proxy.Server == "" {
+		var err error
+		browserCtx, poolRelease, err = r.pool.Acquire(ctx)
+		if err != nil {
+			result.Duration = time.Since(start)
+			result.Error = fmt.Sprintf("acquire browser from pool: %v", err)
+			r.addLog(result, "error", result.Error)
+			return result, err
+		}
+		defer poolRelease()
+		browserCancel = func() {} // no-op; poolRelease handles cleanup
+	} else {
+		allocCtx, allocCancel := r.createAllocator(ctx, task.Proxy, task.Headless)
+		defer allocCancel()
+		browserCtx, browserCancel = chromedp.NewContext(allocCtx)
+	}
 	defer browserCancel()
 
 	netLogger := logs.NewNetworkLogger(task.ID)
@@ -171,6 +193,15 @@ func (r *Runner) createAllocator(ctx context.Context, proxyConfig models.ProxyCo
 		chromedp.DisableGPU,
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("js-flags", "--max-old-space-size=512"),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-default-apps", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-sync", true),
+		chromedp.Flag("disable-translate", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("disable-background-timer-throttling", true),
+		chromedp.Flag("disable-renderer-backgrounding", true),
+		chromedp.Flag("disable-backgrounding-occluded-windows", true),
 	)
 
 	if proxyConfig.Server != "" {

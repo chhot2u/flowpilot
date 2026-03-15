@@ -8,14 +8,19 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// DB wraps the SQLite connection.
+// DB wraps the SQLite connections.
 type DB struct {
-	conn *sql.DB
+	conn     *sql.DB // write-only connection
+	readConn *sql.DB // read-only connection for concurrent queries
 }
+
+// Reader returns the read-only connection for concurrent queries.
+func (db *DB) Reader() *sql.DB { return db.readConn }
 
 // New creates a new database connection and initializes the schema.
 func New(dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=30000&_txlock=immediate"
+	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -23,18 +28,41 @@ func New(dbPath string) (*DB, error) {
 	conn.SetMaxOpenConns(1) // SQLite single-writer
 	conn.SetMaxIdleConns(1)
 
-	db := &DB{conn: conn}
+	readConn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&mode=ro")
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open read database: %w", err)
+	}
+	readConn.SetMaxOpenConns(4)
+	readConn.SetMaxIdleConns(4)
+
+	db := &DB{conn: conn, readConn: readConn}
+
+	// Performance PRAGMAs (apply to both connections)
+	for _, c := range []*sql.DB{conn, readConn} {
+		c.Exec("PRAGMA synchronous=NORMAL")
+		c.Exec("PRAGMA cache_size=-64000")
+		c.Exec("PRAGMA mmap_size=268435456")
+		c.Exec("PRAGMA temp_store=MEMORY")
+	}
+
 	if err := db.migrate(); err != nil {
 		conn.Close()
+		readConn.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
 	return db, nil
 }
 
-// Close closes the database connection.
+// Close closes both database connections.
 func (db *DB) Close() error {
-	return db.conn.Close()
+	readErr := db.readConn.Close()
+	writeErr := db.conn.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return readErr
 }
 
 func (db *DB) migrate() error {
@@ -239,6 +267,12 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_visual_baselines_url ON visual_baselines(url);
 	CREATE INDEX IF NOT EXISTS idx_visual_diffs_baseline ON visual_diffs(baseline_id);
 	CREATE INDEX IF NOT EXISTS idx_visual_diffs_task ON visual_diffs(task_id);
+
+	CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON tasks(status, priority DESC, created_at ASC);
+	CREATE INDEX IF NOT EXISTS idx_tasks_batch_status ON tasks(batch_id, status);
+	CREATE INDEX IF NOT EXISTS idx_network_logs_task_step ON network_logs(task_id, step_index);
+	CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+	CREATE INDEX IF NOT EXISTS idx_step_logs_task_step ON step_logs(task_id, step_index);
 	`
 	_, err := db.conn.Exec(schema)
 	if err != nil {

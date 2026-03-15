@@ -42,7 +42,7 @@ func (db *DB) UpdateRecordedFlow(ctx context.Context, flow models.RecordedFlow) 
 }
 
 func (db *DB) GetRecordedFlow(ctx context.Context, id string) (*models.RecordedFlow, error) {
-	row := db.conn.QueryRowContext(ctx, `SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows WHERE id = ?`, id)
+	row := db.readConn.QueryRowContext(ctx, `SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows WHERE id = ?`, id)
 	var flow models.RecordedFlow
 	var stepsJSON string
 	if err := row.Scan(&flow.ID, &flow.Name, &flow.Description, &stepsJSON, &flow.OriginURL, &flow.CreatedAt, &flow.UpdatedAt); err != nil {
@@ -57,7 +57,7 @@ func (db *DB) GetRecordedFlow(ctx context.Context, id string) (*models.RecordedF
 }
 
 func (db *DB) ListRecordedFlows(ctx context.Context) ([]models.RecordedFlow, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows ORDER BY updated_at DESC`)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, description, steps, origin_url, created_at, updated_at FROM recorded_flows ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list recorded flows: %w", err)
 	}
@@ -121,7 +121,7 @@ func (db *DB) CreateDOMSnapshot(ctx context.Context, snapshot models.DOMSnapshot
 }
 
 func (db *DB) ListDOMSnapshots(ctx context.Context, flowID string) ([]models.DOMSnapshot, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, flow_id, step_index, html, screenshot_path, url, captured_at FROM dom_snapshots WHERE flow_id = ? ORDER BY step_index ASC`, flowID)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, flow_id, step_index, html, screenshot_path, url, captured_at FROM dom_snapshots WHERE flow_id = ? ORDER BY step_index ASC`, flowID)
 	if err != nil {
 		return nil, fmt.Errorf("list dom snapshots: %w", err)
 	}

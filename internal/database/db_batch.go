@@ -27,7 +27,7 @@ func (db *DB) CreateBatchGroupTx(ctx context.Context, tx *sql.Tx, group models.B
 }
 
 func (db *DB) ListBatchGroups(ctx context.Context) ([]models.BatchGroup, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, flow_id, name, total, created_at FROM batch_groups ORDER BY created_at DESC`)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, flow_id, name, total, created_at FROM batch_groups ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query batch groups: %w", err)
 	}
@@ -49,7 +49,7 @@ func (db *DB) ListBatchGroups(ctx context.Context) ([]models.BatchGroup, error) 
 
 func (db *DB) GetBatchProgress(ctx context.Context, batchID string) (models.BatchProgress, error) {
 	progress := models.BatchProgress{BatchID: batchID}
-	rows, err := db.conn.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks WHERE batch_id = ? GROUP BY status`, batchID)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT status, COUNT(*) FROM tasks WHERE batch_id = ? GROUP BY status`, batchID)
 	if err != nil {
 		return progress, fmt.Errorf("query batch progress: %w", err)
 	}
@@ -84,7 +84,7 @@ func (db *DB) GetBatchProgress(ctx context.Context, batchID string) (models.Batc
 }
 
 func (db *DB) ListTasksByBatch(ctx context.Context, batchID string) ([]models.Task, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE batch_id = ? ORDER BY created_at ASC`, batchID)
 	if err != nil {
@@ -107,7 +107,7 @@ func (db *DB) ListTasksByBatch(ctx context.Context, batchID string) ([]models.Ta
 }
 
 func (db *DB) ListTasksByBatchStatus(ctx context.Context, batchID string, status models.TaskStatus) ([]models.Task, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, url, steps, batch_id, flow_id, headless, proxy_server, proxy_username, proxy_password, proxy_geo, proxy_protocol,
 		priority, status, retry_count, max_retries, timeout_seconds, error, result, tags, created_at, started_at, completed_at
 		FROM tasks WHERE batch_id = ? AND status = ? ORDER BY created_at ASC`, batchID, status)
 	if err != nil {

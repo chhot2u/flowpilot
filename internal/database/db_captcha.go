@@ -33,7 +33,7 @@ func (db *DB) CreateCaptchaConfig(ctx context.Context, c models.CaptchaConfig) e
 }
 
 func (db *DB) GetCaptchaConfig(ctx context.Context, id string) (*models.CaptchaConfig, error) {
-	row := db.conn.QueryRowContext(ctx, `
+	row := db.readConn.QueryRowContext(ctx, `
 		SELECT id, provider, api_key, enabled, created_at, updated_at
 		FROM captcha_config WHERE id = ?`, id)
 
@@ -48,7 +48,7 @@ func (db *DB) GetCaptchaConfig(ctx context.Context, id string) (*models.CaptchaC
 }
 
 func (db *DB) GetActiveCaptchaConfig(ctx context.Context) (*models.CaptchaConfig, error) {
-	row := db.conn.QueryRowContext(ctx, `
+	row := db.readConn.QueryRowContext(ctx, `
 		SELECT id, provider, api_key, enabled, created_at, updated_at
 		FROM captcha_config WHERE enabled = 1 LIMIT 1`)
 
@@ -63,7 +63,7 @@ func (db *DB) GetActiveCaptchaConfig(ctx context.Context) (*models.CaptchaConfig
 }
 
 func (db *DB) ListCaptchaConfigs(ctx context.Context) ([]models.CaptchaConfig, error) {
-	rows, err := db.conn.QueryContext(ctx, `
+	rows, err := db.readConn.QueryContext(ctx, `
 		SELECT id, provider, api_key, enabled, created_at, updated_at
 		FROM captcha_config ORDER BY created_at DESC`)
 	if err != nil {

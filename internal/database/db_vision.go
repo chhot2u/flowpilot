@@ -19,7 +19,7 @@ func (db *DB) CreateVisualBaseline(ctx context.Context, b models.VisualBaseline)
 
 func (db *DB) GetVisualBaseline(ctx context.Context, id string) (*models.VisualBaseline, error) {
 	var b models.VisualBaseline
-	err := db.conn.QueryRowContext(ctx, `SELECT id, name, task_id, url, screenshot_path, width, height, created_at FROM visual_baselines WHERE id = ?`, id).
+	err := db.readConn.QueryRowContext(ctx, `SELECT id, name, task_id, url, screenshot_path, width, height, created_at FROM visual_baselines WHERE id = ?`, id).
 		Scan(&b.ID, &b.Name, &b.TaskID, &b.URL, &b.ScreenshotPath, &b.Width, &b.Height, &b.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("visual baseline %s not found", id)
@@ -31,7 +31,7 @@ func (db *DB) GetVisualBaseline(ctx context.Context, id string) (*models.VisualB
 }
 
 func (db *DB) ListVisualBaselines(ctx context.Context) ([]models.VisualBaseline, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, name, task_id, url, screenshot_path, width, height, created_at FROM visual_baselines ORDER BY created_at DESC`)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, name, task_id, url, screenshot_path, width, height, created_at FROM visual_baselines ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query visual baselines: %w", err)
 	}
@@ -82,7 +82,7 @@ func (db *DB) CreateVisualDiff(ctx context.Context, d models.VisualDiff) error {
 func (db *DB) GetVisualDiff(ctx context.Context, id string) (*models.VisualDiff, error) {
 	var d models.VisualDiff
 	var passedInt int
-	err := db.conn.QueryRowContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE id = ?`, id).
+	err := db.readConn.QueryRowContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE id = ?`, id).
 		Scan(&d.ID, &d.BaselineID, &d.TaskID, &d.ScreenshotPath, &d.DiffImagePath, &d.DiffPercent, &d.PixelCount, &d.Threshold, &passedInt, &d.Width, &d.Height, &d.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("visual diff %s not found", id)
@@ -95,7 +95,7 @@ func (db *DB) GetVisualDiff(ctx context.Context, id string) (*models.VisualDiff,
 }
 
 func (db *DB) ListVisualDiffs(ctx context.Context, baselineID string) ([]models.VisualDiff, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE baseline_id = ? ORDER BY created_at DESC`, baselineID)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE baseline_id = ? ORDER BY created_at DESC`, baselineID)
 	if err != nil {
 		return nil, fmt.Errorf("query visual diffs for baseline %s: %w", baselineID, err)
 	}
@@ -118,7 +118,7 @@ func (db *DB) ListVisualDiffs(ctx context.Context, baselineID string) ([]models.
 }
 
 func (db *DB) ListVisualDiffsByTask(ctx context.Context, taskID string) ([]models.VisualDiff, error) {
-	rows, err := db.conn.QueryContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE task_id = ? ORDER BY created_at DESC`, taskID)
+	rows, err := db.readConn.QueryContext(ctx, `SELECT id, baseline_id, task_id, screenshot_path, diff_image_path, diff_percent, pixel_count, threshold, passed, width, height, created_at FROM visual_diffs WHERE task_id = ? ORDER BY created_at DESC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("query visual diffs for task %s: %w", taskID, err)
 	}
