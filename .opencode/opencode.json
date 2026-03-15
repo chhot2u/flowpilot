@@ -370,7 +370,7 @@
     },
     "cocoindex-code": {
       "type": "local",
-      "command": ["/root/.local/bin/cocoindex-code", "serve"],
+      "command": ["/usr/local/bin/cocoindex-code"],
       "enabled": true
     }
   },
