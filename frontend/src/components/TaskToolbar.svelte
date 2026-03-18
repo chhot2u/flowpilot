@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { statusFilter, tagFilter, allTags } from '../lib/store';
   import { StartAllPending, ExportResultsJSON, ExportResultsCSV } from '../../wailsjs/go/main/App';
-  import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -25,8 +25,9 @@
       alert(`Exported to: ${path}`);
     } catch (err: any) {
       toolbarError = `Export failed: ${err?.message || err}`;
+    } finally {
+      exporting = false;
     }
-    exporting = false;
   }
 
   async function exportCSV() {
@@ -37,78 +38,159 @@
       alert(`Exported to: ${path}`);
     } catch (err: any) {
       toolbarError = `Export failed: ${err?.message || err}`;
+    } finally {
+      exporting = false;
     }
-    exporting = false;
   }
 </script>
 
 {#if toolbarError}
-  <div class="toolbar-error">{toolbarError}</div>
+  <div class="toolbar-error" role="alert">{toolbarError}</div>
 {/if}
-<div class="toolbar">
-  <div class="toolbar-left">
-    <button class="btn-primary" on:click={() => dispatch('create')}>
-      + New Task
-    </button>
-    <button class="btn-secondary" on:click={() => dispatch('batchCreate')}>
-      + Batch Create
-    </button>
-    <button class="btn-success" on:click={startAll}>
-      Start All Pending
-    </button>
+
+<section class="toolbar-shell">
+  <div class="toolbar-section toolbar-section--primary">
+    <div class="section-copy">
+      <span class="section-label">Actions</span>
+      <p>Launch tasks, create new work, and export results from one control bar.</p>
+    </div>
+    <div class="action-row">
+      <button type="button" class="btn-primary" on:click={() => dispatch('create')}>
+        + New Task
+      </button>
+      <button type="button" class="btn-secondary" on:click={() => dispatch('batchCreate')}>
+        + Batch Create
+      </button>
+      <button type="button" class="btn-success" on:click={startAll}>
+        Start All Pending
+      </button>
+    </div>
   </div>
 
-  <div class="toolbar-center">
-    <select bind:value={$statusFilter}>
-      <option value="all">All Status</option>
-      <option value="pending">Pending</option>
-      <option value="queued">Queued</option>
-      <option value="running">Running</option>
-      <option value="completed">Completed</option>
-      <option value="failed">Failed</option>
-      <option value="cancelled">Cancelled</option>
-      <option value="retrying">Retrying</option>
-    </select>
-    <select bind:value={$tagFilter}>
-      <option value="">All Tags</option>
-      {#each $allTags as tag}
-        <option value={tag}>{tag}</option>
-      {/each}
-    </select>
+  <div class="toolbar-section toolbar-section--filters">
+    <div class="section-copy">
+      <span class="section-label">Filters</span>
+      <p>Narrow the queue view by task state or tag.</p>
+    </div>
+    <div class="filter-row">
+      <label>
+        <span>Status</span>
+        <select bind:value={$statusFilter}>
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="queued">Queued</option>
+          <option value="running">Running</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="retrying">Retrying</option>
+        </select>
+      </label>
+      <label>
+        <span>Tag</span>
+        <select bind:value={$tagFilter}>
+          <option value="">All Tags</option>
+          {#each $allTags as tag}
+            <option value={tag}>{tag}</option>
+          {/each}
+        </select>
+      </label>
+    </div>
   </div>
 
-  <div class="toolbar-right">
-    <button class="btn-secondary btn-sm" on:click={exportJSON} disabled={exporting}>
-      Export JSON
-    </button>
-    <button class="btn-secondary btn-sm" on:click={exportCSV} disabled={exporting}>
-      Export CSV
-    </button>
+  <div class="toolbar-section toolbar-section--exports">
+    <div class="section-copy">
+      <span class="section-label">Exports</span>
+      <p>Capture queue output for analysis or sharing.</p>
+    </div>
+    <div class="action-row action-row--compact">
+      <button type="button" class="btn-secondary btn-sm" on:click={exportJSON} disabled={exporting}>
+        Export JSON
+      </button>
+      <button type="button" class="btn-secondary btn-sm" on:click={exportCSV} disabled={exporting}>
+        Export CSV
+      </button>
+    </div>
   </div>
-</div>
+</section>
 
 <style>
-  .toolbar {
+  .toolbar-shell {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 0.85fr;
+    gap: 14px;
+    padding-top: 16px;
+  }
+
+  .toolbar-section {
     display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px 18px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.62);
+  }
+
+  .section-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #93c5fd;
+  }
+
+  .section-copy p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .action-row,
+  .filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: end;
+  }
+
+  .action-row--compact {
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
   }
-  .toolbar-left, .toolbar-right, .toolbar-center {
+
+  label {
     display: flex;
-    gap: 8px;
-  }
-  select {
-    min-width: 150px;
-  }
-  .toolbar-error {
-    padding: 6px 20px;
-    background: rgba(239, 68, 68, 0.1);
-    color: var(--danger, #ef4444);
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    color: var(--text-muted);
     font-size: 12px;
-    border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+    font-weight: 600;
+  }
+
+  select {
+    min-width: 160px;
+  }
+
+  .toolbar-error {
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    background: rgba(127, 29, 29, 0.34);
+    color: #fca5a5;
+    font-size: 12px;
+  }
+
+  @media (max-width: 1200px) {
+    .toolbar-shell {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

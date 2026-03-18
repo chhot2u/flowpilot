@@ -426,17 +426,21 @@
 <style>
   .detail-panel {
     width: 100%;
-    background: var(--bg-secondary);
-    border-left: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.78);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 18px;
     overflow-y: auto;
-    padding: 16px;
+    padding: 18px;
     flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
   .detail-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
   }
   .detail-header h3 {
     font-size: 16px;
@@ -450,9 +454,10 @@
   }
   .edit-form {
     margin-bottom: 16px;
-    padding: 12px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius);
+    padding: 14px;
+    background: rgba(30, 41, 59, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 14px;
   }
   .edit-form .form-group { margin-bottom: 8px; }
   .edit-form label {
@@ -491,7 +496,11 @@
     margin-top: 6px;
   }
   .detail-section {
-    margin-bottom: 16px;
+    margin-bottom: 18px;
+    padding: 14px;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 16px;
   }
   .detail-section h4 {
     font-size: 12px;
