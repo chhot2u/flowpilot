@@ -31,7 +31,18 @@
   let auditRequestSeq = 0;
   let lastAuditTaskId: string | null = null;
 
-  const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select', 'click_ad'];
+  const actions = [
+    'navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select',
+    'if_element', 'if_text', 'if_url', 'loop', 'end_loop', 'break_loop', 'goto', 'solve_captcha', 'click_ad',
+    'while_condition', 'end_while', 'if_exists', 'if_not_exists', 'if_visible', 'if_enabled',
+    'try', 'catch', 'finally', 'variable_set', 'variable_math', 'variable_string',
+    'hover', 'drag_drop', 'context_click', 'highlight', 'select_random',
+    'get_cookies', 'set_cookie', 'delete_cookies', 'get_storage', 'set_storage', 'delete_storage',
+    'download', 'debug_pause', 'debug_resume', 'debug_step', 'headless',
+    'double_click', 'file_upload', 'navigate_back', 'navigate_forward', 'reload',
+    'scroll_into_view', 'submit_form', 'wait_not_present', 'wait_enabled', 'wait_function',
+    'emulate_device', 'get_title', 'get_attributes'
+  ];
 
   ListProxyRoutingPresets().then((list) => {
     routingPresets = (list || []) as ProxyRoutingPreset[];

@@ -60,6 +60,34 @@ const (
 	ActionGetTitle        StepAction = "get_title"
 	ActionGetAttributes   StepAction = "get_attributes"
 	ActionClickAd         StepAction = "click_ad"
+	ActionWhile           StepAction = "while_condition"
+	ActionEndWhile        StepAction = "end_while"
+	ActionIfExists        StepAction = "if_exists"
+	ActionIfNotExists     StepAction = "if_not_exists"
+	ActionIfVisible       StepAction = "if_visible"
+	ActionIfEnabled       StepAction = "if_enabled"
+	ActionTryBlock        StepAction = "try"
+	ActionCatchBlock      StepAction = "catch"
+	ActionFinallyBlock    StepAction = "finally"
+	ActionVariableSet     StepAction = "variable_set"
+	ActionVariableMath    StepAction = "variable_math"
+	ActionVariableString  StepAction = "variable_string"
+	ActionHover           StepAction = "hover"
+	ActionDragDrop        StepAction = "drag_drop"
+	ActionContextClick    StepAction = "context_click"
+	ActionHighlight       StepAction = "highlight"
+	ActionGetCookies      StepAction = "get_cookies"
+	ActionSetCookie       StepAction = "set_cookie"
+	ActionDeleteCookies   StepAction = "delete_cookies"
+	ActionGetStorage      StepAction = "get_storage"
+	ActionSetStorage      StepAction = "set_storage"
+	ActionDeleteStorage   StepAction = "delete_storage"
+	ActionDownload        StepAction = "download"
+	ActionSelectRandom    StepAction = "select_random"
+	ActionDebugStep       StepAction = "debug_step"
+	ActionDebugPause      StepAction = "debug_pause"
+	ActionDebugResume     StepAction = "debug_resume"
+	ActionHeadless        StepAction = "headless"
 )
 
 func ExecutableStepActions() []StepAction {
@@ -89,6 +117,25 @@ func ExecutableStepActions() []StepAction {
 		ActionGetTitle,
 		ActionGetAttributes,
 		ActionClickAd,
+		ActionHover,
+		ActionDragDrop,
+		ActionContextClick,
+		ActionHighlight,
+		ActionGetCookies,
+		ActionSetCookie,
+		ActionDeleteCookies,
+		ActionGetStorage,
+		ActionSetStorage,
+		ActionDeleteStorage,
+		ActionDownload,
+		ActionSelectRandom,
+		ActionVariableSet,
+		ActionVariableMath,
+		ActionVariableString,
+		ActionDebugStep,
+		ActionDebugPause,
+		ActionDebugResume,
+		ActionHeadless,
 	}
 }
 
@@ -101,6 +148,15 @@ func ControlFlowStepActions() []StepAction {
 		ActionEndLoop,
 		ActionBreakLoop,
 		ActionGoto,
+		ActionWhile,
+		ActionEndWhile,
+		ActionIfExists,
+		ActionIfNotExists,
+		ActionIfVisible,
+		ActionIfEnabled,
+		ActionTryBlock,
+		ActionCatchBlock,
+		ActionFinallyBlock,
 	}
 }
 
@@ -116,11 +172,22 @@ type TaskStep struct {
 	Action    StepAction `json:"action"`
 	Selector  string     `json:"selector,omitempty"`
 	Value     string     `json:"value,omitempty"`
-	Timeout   int        `json:"timeout,omitempty"` // milliseconds
+	Timeout   int        `json:"timeout,omitempty"`
 	Condition string     `json:"condition,omitempty"`
 	Label     string     `json:"label,omitempty"`
 	JumpTo    string     `json:"jumpTo,omitempty"`
 	VarName   string     `json:"varName,omitempty"`
+	Operator  string     `json:"operator,omitempty"`
+	MaxLoops  int        `json:"maxLoops,omitempty"`
+	Target    string     `json:"target,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	Keys      string     `json:"keys,omitempty"`
+	Duration  int        `json:"duration,omitempty"`
+	Domain    string     `json:"domain,omitempty"`
+	Name      string     `json:"name,omitempty"`
+	Path      string     `json:"path,omitempty"`
+	Data      string     `json:"data,omitempty"`
+	Strategy  string     `json:"strategy,omitempty"`
 }
 
 // ProxyConfig holds proxy connection details for a task.
@@ -223,4 +290,44 @@ type PaginatedTasks struct {
 	Page       int    `json:"page"`
 	PageSize   int    `json:"pageSize"`
 	TotalPages int    `json:"totalPages"`
+}
+
+type TaskContext struct {
+	Variables map[string]string
+	Paused    bool
+	PausedAt  int
+	StepIndex int
+}
+
+func NewTaskContext() *TaskContext {
+	return &TaskContext{
+		Variables: make(map[string]string),
+		Paused:    false,
+		PausedAt:  -1,
+		StepIndex: 0,
+	}
+}
+
+type ScheduledTask struct {
+	ID         string    `json:"id"`
+	TaskID     string    `json:"taskId"`
+	CronExpr   string    `json:"cronExpr,omitempty"`
+	IntervalMs int64     `json:"intervalMs,omitempty"`
+	Enabled    bool      `json:"enabled"`
+	NextRun    time.Time `json:"nextRun,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type TaskExport struct {
+	Version    string    `json:"version"`
+	ExportedAt time.Time `json:"exportedAt"`
+	Name       string    `json:"name"`
+	Task       Task      `json:"task"`
+}
+
+type FlowExport struct {
+	Version    string    `json:"version"`
+	ExportedAt time.Time `json:"exportedAt"`
+	FlowName   string    `json:"flowName"`
+	Tasks      []Task    `json:"tasks"`
 }

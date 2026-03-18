@@ -68,6 +68,58 @@ func (r *Runner) executeStep(ctx context.Context, step models.TaskStep, result *
 		return r.execGetAttributes(ctx, step, result)
 	case models.ActionClickAd:
 		return r.execClickAd(ctx, step, result)
+	case models.ActionWhile:
+		return r.execWhile(ctx, step, result)
+	case models.ActionEndWhile:
+		return r.execEndWhile(ctx, step, result)
+	case models.ActionIfExists:
+		return r.execIfExists(ctx, step, result)
+	case models.ActionIfNotExists:
+		return r.execIfNotExists(ctx, step, result)
+	case models.ActionIfVisible:
+		return r.execIfVisible(ctx, step, result)
+	case models.ActionIfEnabled:
+		return r.execIfEnabled(ctx, step, result)
+	case models.ActionTryBlock:
+		return r.execTryBlock(ctx, step, result)
+	case models.ActionVariableSet:
+		return r.execVariableSet(ctx, step, result)
+	case models.ActionVariableMath:
+		return r.execVariableMath(ctx, step, result)
+	case models.ActionVariableString:
+		return r.execVariableString(ctx, step, result)
+	case models.ActionHover:
+		return r.execHover(ctx, step)
+	case models.ActionDragDrop:
+		return r.execDragDrop(ctx, step)
+	case models.ActionContextClick:
+		return r.execContextClick(ctx, step)
+	case models.ActionHighlight:
+		return r.execHighlight(ctx, step, result)
+	case models.ActionGetCookies:
+		return r.execGetCookies(ctx, step, result)
+	case models.ActionSetCookie:
+		return r.execSetCookie(ctx, step, result)
+	case models.ActionDeleteCookies:
+		return r.execDeleteCookies(ctx, step, result)
+	case models.ActionGetStorage:
+		return r.execGetStorage(ctx, step, result)
+	case models.ActionSetStorage:
+		return r.execSetStorage(ctx, step, result)
+	case models.ActionDeleteStorage:
+		return r.execDeleteStorage(ctx, step, result)
+	case models.ActionDownload:
+		return r.execDownload(ctx, step, result)
+	case models.ActionSelectRandom:
+		return r.execSelectRandom(ctx, step, result)
+	case models.ActionDebugPause:
+		return r.execDebugPause(ctx, step, result)
+	case models.ActionDebugResume:
+		return r.execDebugResume(ctx, step, result)
+	case models.ActionDebugStep:
+		return r.execDebugStep(ctx, step, result)
+	case models.ActionHeadless:
+		return r.execHeadless(ctx, step)
 	default:
 		return fmt.Errorf("unknown action: %s", step.Action)
 	}
@@ -605,5 +657,514 @@ func (r *Runner) execClickAd(ctx context.Context, step models.TaskStep, result *
 	if _, err := r.captureAdScreenshot(ctx, result, keyPrefix, "after"); err != nil {
 		r.addLog(result, "warn", fmt.Sprintf("click_ad: %v", err))
 	}
+	return nil
+}
+
+func (r *Runner) execWhile(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.Condition == "" {
+		return fmt.Errorf("while_condition: condition is required")
+	}
+	maxLoops := step.MaxLoops
+	if maxLoops <= 0 {
+		maxLoops = 1000
+	}
+	result.ExtractedData["_while_max_loops"] = strconv.Itoa(maxLoops)
+	result.ExtractedData["_while_condition"] = step.Condition
+	return nil
+}
+
+func (r *Runner) execEndWhile(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	return nil
+}
+
+func (r *Runner) execIfExists(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("if_exists", step.Selector); err != nil {
+		return err
+	}
+	var exists bool
+	checkJS := fmt.Sprintf(`(function() { return document.querySelector(%q) !== null; })()`, step.Selector)
+	if err := r.exec.Run(ctx, chromedp.Evaluate(checkJS, &exists)); err != nil {
+		return fmt.Errorf("if_exists: check element: %w", err)
+	}
+	result.ExtractedData["_if_exists_result"] = strconv.FormatBool(exists)
+	if !exists && step.JumpTo != "" {
+		return r.jumpToLabel(step.JumpTo, result)
+	}
+	return nil
+}
+
+func (r *Runner) execIfNotExists(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("if_not_exists", step.Selector); err != nil {
+		return err
+	}
+	var exists bool
+	checkJS := fmt.Sprintf(`(function() { return document.querySelector(%q) !== null; })()`, step.Selector)
+	if err := r.exec.Run(ctx, chromedp.Evaluate(checkJS, &exists)); err != nil {
+		return fmt.Errorf("if_not_exists: check element: %w", err)
+	}
+	result.ExtractedData["_if_not_exists_result"] = strconv.FormatBool(!exists)
+	if exists && step.JumpTo != "" {
+		return r.jumpToLabel(step.JumpTo, result)
+	}
+	return nil
+}
+
+func (r *Runner) execIfVisible(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("if_visible", step.Selector); err != nil {
+		return err
+	}
+	var visible bool
+	checkJS := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%q);
+		if (!el) return false;
+		var style = window.getComputedStyle(el);
+		return el.offsetWidth > 0 && el.offsetHeight > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+	})()`, step.Selector)
+	if err := r.exec.Run(ctx, chromedp.Evaluate(checkJS, &visible)); err != nil {
+		return fmt.Errorf("if_visible: check visibility: %w", err)
+	}
+	result.ExtractedData["_if_visible_result"] = strconv.FormatBool(visible)
+	if !visible && step.JumpTo != "" {
+		return r.jumpToLabel(step.JumpTo, result)
+	}
+	return nil
+}
+
+func (r *Runner) execIfEnabled(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("if_enabled", step.Selector); err != nil {
+		return err
+	}
+	var enabled bool
+	checkJS := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%q);
+		if (!el) return false;
+		return !el.disabled && !el.readOnly;
+	})()`, step.Selector)
+	if err := r.exec.Run(ctx, chromedp.Evaluate(checkJS, &enabled)); err != nil {
+		return fmt.Errorf("if_enabled: check enabled: %w", err)
+	}
+	result.ExtractedData["_if_enabled_result"] = strconv.FormatBool(enabled)
+	if !enabled && step.JumpTo != "" {
+		return r.jumpToLabel(step.JumpTo, result)
+	}
+	return nil
+}
+
+func (r *Runner) execTryBlock(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	return nil
+}
+
+func (r *Runner) jumpToLabel(label string, result *models.TaskResult) error {
+	result.ExtractedData["_jump_to_label"] = label
+	return nil
+}
+
+func (r *Runner) execVariableSet(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.VarName == "" {
+		return fmt.Errorf("variable_set: varName is required")
+	}
+	key := "var_" + step.VarName
+	result.ExtractedData[key] = step.Value
+	return nil
+}
+
+func (r *Runner) execVariableMath(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.VarName == "" {
+		return fmt.Errorf("variable_math: varName is required")
+	}
+	key := "var_" + step.VarName
+	currentVal := result.ExtractedData[key]
+	if currentVal == "" {
+		currentVal = "0"
+	}
+	current, err := strconv.ParseFloat(currentVal, 64)
+	if err != nil {
+		return fmt.Errorf("variable_math: invalid number %q: %w", currentVal, err)
+	}
+	var newVal float64
+	switch step.Operator {
+	case "+", "add":
+		newVal = current + mustParseFloat(step.Value)
+	case "-", "sub", "subtract":
+		newVal = current - mustParseFloat(step.Value)
+	case "*", "mul", "multiply":
+		newVal = current * mustParseFloat(step.Value)
+	case "/", "div", "divide":
+		divisor := mustParseFloat(step.Value)
+		if divisor == 0 {
+			return fmt.Errorf("variable_math: division by zero")
+		}
+		newVal = current / divisor
+	default:
+		return fmt.Errorf("variable_math: unknown operator %q", step.Operator)
+	}
+	result.ExtractedData[key] = strconv.FormatFloat(newVal, 'f', -1, 64)
+	return nil
+}
+
+func mustParseFloat(s string) float64 {
+	v, _ := strconv.ParseFloat(s, 64)
+	return v
+}
+
+func (r *Runner) execVariableString(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.VarName == "" {
+		return fmt.Errorf("variable_string: varName is required")
+	}
+	key := "var_" + step.VarName
+	currentVal := result.ExtractedData[key]
+	switch step.Operator {
+	case "concat", "append":
+		result.ExtractedData[key] = currentVal + step.Value
+	case "prepend":
+		result.ExtractedData[key] = step.Value + currentVal
+	case "replace":
+		if len(step.Condition) > 0 {
+			result.ExtractedData[key] = strings.ReplaceAll(currentVal, step.Condition, step.Value)
+		}
+	case "upper":
+		result.ExtractedData[key] = strings.ToUpper(currentVal)
+	case "lower":
+		result.ExtractedData[key] = strings.ToLower(currentVal)
+	case "trim":
+		result.ExtractedData[key] = strings.TrimSpace(currentVal)
+	case "length":
+		result.ExtractedData[key] = strconv.Itoa(len(currentVal))
+	case "substring":
+		start, _ := strconv.Atoi(step.Condition)
+		end := start + len(step.Value)
+		if start < 0 {
+			start = 0
+		}
+		if end > len(currentVal) {
+			end = len(currentVal)
+		}
+		result.ExtractedData[key] = currentVal[start:end]
+	default:
+		result.ExtractedData[key] = currentVal
+	}
+	return nil
+}
+
+func (r *Runner) execHover(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("hover", step.Selector); err != nil {
+		return err
+	}
+	hoverJS := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%q);
+		if (!el) return false;
+		var rect = el.getBoundingClientRect();
+		var event = new MouseEvent('mouseover', {
+			bubbles: true, cancelable: true, view: window,
+			clientX: rect.left + rect.width / 2,
+			clientY: rect.top + rect.height / 2
+		});
+		el.dispatchEvent(event);
+		return true;
+	})()`, step.Selector)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(hoverJS, &success)); err != nil {
+		return fmt.Errorf("hover: execute hover: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) execDragDrop(ctx context.Context, step models.TaskStep) error {
+	if step.Selector == "" {
+		return fmt.Errorf("drag_drop: source selector is required")
+	}
+	if step.Target == "" {
+		return fmt.Errorf("drag_drop: target selector is required")
+	}
+	dragJS := fmt.Sprintf(`(function() {
+		var source = document.querySelector(%q);
+		var target = document.querySelector(%q);
+		if (!source || !target) return false;
+		var sourceRect = source.getBoundingClientRect();
+		var targetRect = target.getBoundingClientRect();
+		var sourceX = sourceRect.left + sourceRect.width / 2;
+		var sourceY = sourceRect.top + sourceRect.height / 2;
+		var targetX = targetRect.left + targetRect.width / 2;
+		var targetY = targetRect.top + targetRect.height / 2;
+		var dispatchDragEvent = function(el, type, x, y) {
+			var event = new MouseEvent(type, {
+				bubbles: true, cancelable: true, view: window,
+				clientX: x, clientY: y,
+				detail: 0, button: 0, buttons: 1
+			});
+			el.dispatchEvent(event);
+		};
+		dispatchDragEvent(source, 'mousedown', sourceX, sourceY);
+		dispatchDragEvent(source, 'mousemove', targetX, targetY);
+		dispatchDragEvent(target, 'mouseover', targetX, targetY);
+		dispatchDragEvent(target, 'mouseenter', targetX, targetY);
+		dispatchDragEvent(target, 'dragenter', targetX, targetY);
+		dispatchDragEvent(target, 'drop', targetX, targetY);
+		dispatchDragEvent(source, 'mouseup', targetX, targetY);
+		return true;
+	})()`, step.Selector, step.Target)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(dragJS, &success)); err != nil {
+		return fmt.Errorf("drag_drop: execute drag: %w", err)
+	}
+	if !success {
+		return fmt.Errorf("drag_drop: drag operation failed")
+	}
+	return nil
+}
+
+func (r *Runner) execContextClick(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("context_click", step.Selector); err != nil {
+		return err
+	}
+	contextClickJS := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%q);
+		if (!el) return false;
+		var rect = el.getBoundingClientRect();
+		var event = new MouseEvent('contextmenu', {
+			bubbles: true, cancelable: true, view: window,
+			clientX: rect.left + rect.width / 2,
+			clientY: rect.top + rect.height / 2,
+			button: 2
+		});
+		el.dispatchEvent(event);
+		return true;
+	})()`, step.Selector)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(contextClickJS, &success)); err != nil {
+		return fmt.Errorf("context_click: execute context click: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) execHighlight(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("highlight", step.Selector); err != nil {
+		return err
+	}
+	color := step.Value
+	if color == "" {
+		color = "yellow"
+	}
+	duration := 2000
+	if step.Duration > 0 {
+		duration = step.Duration
+	}
+	highlightJS := fmt.Sprintf(`(function() {
+		var el = document.querySelector(%q);
+		if (!el) return false;
+		var originalOutline = el.style.outline;
+		var originalBackground = el.style.backgroundColor;
+		el.style.outline = '3px solid %s';
+		el.style.backgroundColor = 'rgba(255, 255, 0, 0.3)';
+		setTimeout(function() {
+			el.style.outline = originalOutline;
+			el.style.backgroundColor = originalBackground;
+		}, %d);
+		return true;
+	})()`, step.Selector, color, duration)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(highlightJS, &success)); err != nil {
+		return fmt.Errorf("highlight: execute highlight: %w", err)
+	}
+	result.ExtractedData["_highlight_result"] = strconv.FormatBool(success)
+	return nil
+}
+
+func (r *Runner) execGetCookies(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	getCookiesJS := `document.cookie.split(';').map(function(c) {
+		var parts = c.trim().split('=');
+		return {name: parts[0], value: parts.slice(1).join('=')};
+	})`
+	var cookies []map[string]string
+	if err := r.exec.Run(ctx, chromedp.Evaluate(getCookiesJS, &cookies)); err != nil {
+		return fmt.Errorf("get_cookies: retrieve cookies: %w", err)
+	}
+	keyPrefix := step.VarName
+	if keyPrefix == "" {
+		keyPrefix = "cookie"
+	}
+	for i, c := range cookies {
+		result.ExtractedData[fmt.Sprintf("%s_%d_name", keyPrefix, i)] = c["name"]
+		result.ExtractedData[fmt.Sprintf("%s_%d_value", keyPrefix, i)] = c["value"]
+	}
+	result.ExtractedData[keyPrefix+"_count"] = strconv.Itoa(len(cookies))
+	return nil
+}
+
+func (r *Runner) execSetCookie(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.Name == "" {
+		return fmt.Errorf("set_cookie: name is required")
+	}
+	cookieStr := step.Name + "=" + step.Value
+	if step.Path != "" {
+		cookieStr += "; path=" + step.Path
+	}
+	if step.Domain != "" {
+		cookieStr += "; domain=" + step.Domain
+	}
+	setCookieJS := fmt.Sprintf(`(function() { document.cookie = %q; return true; })()`, cookieStr)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(setCookieJS, &success)); err != nil {
+		return fmt.Errorf("set_cookie: set cookie: %w", err)
+	}
+	result.ExtractedData["_set_cookie_"+step.Name] = strconv.FormatBool(success)
+	return nil
+}
+
+func (r *Runner) execDeleteCookies(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	domain := step.Domain
+	deleteCookieJS := fmt.Sprintf(`(function() {
+		var cookies = document.cookie.split(';');
+		var domain = %q;
+		for (var i = 0; i < cookies.length; i++) {
+			var name = cookies[i].trim().split('=')[0];
+			if (domain === '' || name.indexOf(domain) !== -1) {
+				document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/';
+			}
+		}
+		return true;
+	})()`, domain)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(deleteCookieJS, &success)); err != nil {
+		return fmt.Errorf("delete_cookies: delete cookies: %w", err)
+	}
+	result.ExtractedData["_delete_cookies_domain"] = domain
+	return nil
+}
+
+func (r *Runner) execGetStorage(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	storageType := "localStorage"
+	if step.Data == "session" {
+		storageType = "sessionStorage"
+	}
+	key := step.VarName
+	if key == "" {
+		key = step.Selector
+	}
+	getJS := fmt.Sprintf(`(function() {
+		var data = %s.getItem(%q);
+		return data;
+	})()`, storageType, key)
+	var value string
+	if err := r.exec.Run(ctx, chromedp.Evaluate(getJS, &value)); err != nil {
+		return fmt.Errorf("get_storage: get storage item: %w", err)
+	}
+	result.ExtractedData["storage_"+key] = value
+	return nil
+}
+
+func (r *Runner) execSetStorage(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.Selector == "" {
+		return fmt.Errorf("set_storage: key is required")
+	}
+	storageType := "localStorage"
+	if step.Data == "session" {
+		storageType = "sessionStorage"
+	}
+	setJS := fmt.Sprintf(`(function() {
+		%s.setItem(%q, %q);
+		return true;
+	})()`, storageType, step.Selector, step.Value)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(setJS, &success)); err != nil {
+		return fmt.Errorf("set_storage: set storage item: %w", err)
+	}
+	result.ExtractedData["_set_storage_"+step.Selector] = strconv.FormatBool(success)
+	return nil
+}
+
+func (r *Runner) execDeleteStorage(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if step.Selector == "" {
+		return fmt.Errorf("delete_storage: key is required")
+	}
+	storageType := "localStorage"
+	if step.Data == "session" {
+		storageType = "sessionStorage"
+	}
+	deleteJS := fmt.Sprintf(`(function() {
+		%s.removeItem(%q);
+		return true;
+	})()`, storageType, step.Selector)
+	var success bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(deleteJS, &success)); err != nil {
+		return fmt.Errorf("delete_storage: delete storage item: %w", err)
+	}
+	result.ExtractedData["_delete_storage_"+step.Selector] = strconv.FormatBool(success)
+	return nil
+}
+
+func (r *Runner) execDownload(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("download", step.Selector); err != nil {
+		return err
+	}
+	downloadPath := step.Path
+	if downloadPath == "" {
+		downloadPath = r.screenshotDir
+	}
+	setDownloadJS := fmt.Sprintf(`(function() {
+		var link = document.querySelector(%q);
+		if (!link || !link.href) return false;
+		return link.href;
+	})()`, step.Selector)
+	var url string
+	if err := r.exec.Run(ctx, chromedp.Evaluate(setDownloadJS, &url)); err != nil {
+		return fmt.Errorf("download: get download URL: %w", err)
+	}
+	result.ExtractedData["_download_url"] = url
+	result.ExtractedData["_download_path"] = downloadPath
+	return nil
+}
+
+func (r *Runner) execSelectRandom(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("select_random", step.Selector); err != nil {
+		return err
+	}
+	getOptionsJS := fmt.Sprintf(`(function() {
+		var select = document.querySelector(%q);
+		if (!select || select.tagName !== 'SELECT') return [];
+		var options = [];
+		for (var i = 0; i < select.options.length; i++) {
+			options.push({index: i, value: select.options[i].value, text: select.options[i].text});
+		}
+		return options;
+	})()`, step.Selector)
+	var options []map[string]string
+	if err := r.exec.Run(ctx, chromedp.Evaluate(getOptionsJS, &options)); err != nil {
+		return fmt.Errorf("select_random: get options: %w", err)
+	}
+	if len(options) == 0 {
+		return fmt.Errorf("select_random: no options found")
+	}
+	randomIndex := time.Now().UnixNano() % int64(len(options))
+	selectedValue := options[randomIndex]["value"]
+	if err := r.exec.Run(ctx,
+		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+		chromedp.SetValue(step.Selector, selectedValue, chromedp.ByQuery),
+	); err != nil {
+		return fmt.Errorf("select_random: select option: %w", err)
+	}
+	result.ExtractedData["_select_random_value"] = selectedValue
+	result.ExtractedData["_select_random_index"] = strconv.FormatInt(randomIndex, 10)
+	return nil
+}
+
+func (r *Runner) execDebugPause(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	result.ExtractedData["_debug_paused"] = "true"
+	result.ExtractedData["_debug_step_index"] = strconv.Itoa(len(result.StepLogs))
+	return nil
+}
+
+func (r *Runner) execDebugStep(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	result.ExtractedData["_debug_step"] = "executed"
+	result.ExtractedData["_debug_step_index"] = strconv.Itoa(len(result.StepLogs))
+	return nil
+}
+
+func (r *Runner) execDebugResume(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	result.ExtractedData["_debug_paused"] = "false"
+	return nil
+}
+
+func (r *Runner) execHeadless(ctx context.Context, step models.TaskStep) error {
 	return nil
 }
