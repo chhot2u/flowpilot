@@ -59,6 +59,7 @@ const (
 	ActionEmulateDevice   StepAction = "emulate_device"
 	ActionGetTitle        StepAction = "get_title"
 	ActionGetAttributes   StepAction = "get_attributes"
+	ActionClickAd         StepAction = "click_ad"
 )
 
 func ExecutableStepActions() []StepAction {
@@ -87,6 +88,7 @@ func ExecutableStepActions() []StepAction {
 		ActionEmulateDevice,
 		ActionGetTitle,
 		ActionGetAttributes,
+		ActionClickAd,
 	}
 }
 

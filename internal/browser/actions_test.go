@@ -393,7 +393,140 @@ func validExecutableStep(action models.StepAction) models.TaskStep {
 		return models.TaskStep{Action: action, Value: "document.readyState === 'complete'"}
 	case models.ActionEmulateDevice:
 		return models.TaskStep{Action: action, Value: "375x812"}
+	case models.ActionClickAd:
+		return models.TaskStep{Action: action}
 	default:
 		return models.TaskStep{Action: action}
+	}
+}
+
+func TestExecClickAdWithSelector(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-sel", ExtractedData: make(map[string]string)}
+
+	// The mock executor returns zero-value from Evaluate, so adDiscoveryResult.Found
+	// will be false. This verifies the selector path invokes the executor and handles
+	// the "not found" case gracefully.
+	err := r.execClickAd(context.Background(), models.TaskStep{Selector: "ins.adsbygoogle"}, result)
+	if err == nil {
+		t.Fatal("expected error for element not found via mock, got nil")
+	}
+	if !strings.Contains(err.Error(), "element not found") {
+		t.Fatalf("expected 'element not found' error, got: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("expected 1 executor call (metadata eval), got %d", mock.callCount())
+	}
+}
+
+func TestExecClickAdAutoDiscover(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-auto", ExtractedData: make(map[string]string)}
+
+	// Without a selector, execClickAd runs the discovery script.
+	// The mock returns zero-value (found=false) so we expect an error.
+	err := r.execClickAd(context.Background(), models.TaskStep{}, result)
+	if err == nil {
+		t.Fatal("expected error for no ad found, got nil")
+	}
+	if !strings.Contains(err.Error(), "no ad element found") {
+		t.Fatalf("expected 'no ad element found' error, got: %v", err)
+	}
+}
+
+func TestExecClickAdSelectorNotFound(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-notfound", ExtractedData: make(map[string]string)}
+
+	// With a selector, the mock returns zero-value adDiscoveryResult (found=false).
+	err := r.execClickAd(context.Background(), models.TaskStep{Selector: "#nonexistent-ad"}, result)
+	if err == nil {
+		t.Fatal("expected error for element not found, got nil")
+	}
+	if !strings.Contains(err.Error(), "element not found") {
+		t.Fatalf("expected 'element not found' error, got: %v", err)
+	}
+}
+
+func TestExecClickAdError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("ad click failed")}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-err", ExtractedData: make(map[string]string)}
+
+	err := r.execClickAd(context.Background(), models.TaskStep{Selector: "ins.adsbygoogle"}, result)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ad click failed") {
+		t.Fatalf("expected 'ad click failed' in error, got: %v", err)
+	}
+}
+
+func TestExecClickAdVarName(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-var", ExtractedData: make(map[string]string)}
+
+	// Without selector, discovery returns found=false, but we verify varName prefix is used.
+	_ = r.execClickAd(context.Background(), models.TaskStep{VarName: "my_ad"}, result)
+	// The error is expected (no ad found), but we just verify no panic.
+}
+
+func TestExecClickAdScreenshots(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-ss", ExtractedData: make(map[string]string)}
+
+	// With a selector provided, the mock returns zero-value adDiscoveryResult (found=false),
+	// so the click itself will fail. But captureAdScreenshot is called before the click
+	// and the screenshot call (FullScreenshot) goes through the mock successfully.
+	// We test the helper directly instead.
+	path, err := r.captureAdScreenshot(context.Background(), result, "ad", "before")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty screenshot path")
+	}
+	if len(result.Screenshots) != 1 {
+		t.Fatalf("expected 1 screenshot, got %d", len(result.Screenshots))
+	}
+	if result.ExtractedData["ad_screenshot_before"] == "" {
+		t.Error("expected ad_screenshot_before in extracted data")
+	}
+
+	// Capture an after screenshot too.
+	path2, err := r.captureAdScreenshot(context.Background(), result, "ad", "after")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path2 == "" {
+		t.Fatal("expected non-empty screenshot path")
+	}
+	if len(result.Screenshots) != 2 {
+		t.Fatalf("expected 2 screenshots, got %d", len(result.Screenshots))
+	}
+	if result.ExtractedData["ad_screenshot_after"] == "" {
+		t.Error("expected ad_screenshot_after in extracted data")
+	}
+}
+
+func TestCaptureAdScreenshotError(t *testing.T) {
+	mock := &mockExecutor{runErr: errors.New("screenshot failed")}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ad-ss-err", ExtractedData: make(map[string]string)}
+
+	_, err := r.captureAdScreenshot(context.Background(), result, "ad", "before")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "screenshot failed") {
+		t.Fatalf("expected 'screenshot failed' in error, got: %v", err)
+	}
+	if len(result.Screenshots) != 0 {
+		t.Fatalf("expected 0 screenshots on error, got %d", len(result.Screenshots))
 	}
 }

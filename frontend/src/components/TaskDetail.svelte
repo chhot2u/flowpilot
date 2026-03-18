@@ -31,7 +31,7 @@
   let auditRequestSeq = 0;
   let lastAuditTaskId: string | null = null;
 
-  const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select'];
+  const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select', 'click_ad'];
 
   ListProxyRoutingPresets().then((list) => {
     routingPresets = (list || []) as ProxyRoutingPreset[];

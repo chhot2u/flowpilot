@@ -66,6 +66,8 @@ func (r *Runner) executeStep(ctx context.Context, step models.TaskStep, result *
 		return r.execGetTitle(ctx, step, result)
 	case models.ActionGetAttributes:
 		return r.execGetAttributes(ctx, step, result)
+	case models.ActionClickAd:
+		return r.execClickAd(ctx, step, result)
 	default:
 		return fmt.Errorf("unknown action: %s", step.Action)
 	}
@@ -421,6 +423,187 @@ func (r *Runner) execGetAttributes(ctx context.Context, step models.TaskStep, re
 	}
 	for k, v := range attrs {
 		result.ExtractedData[key+"_"+k] = v
+	}
+	return nil
+}
+
+// adDiscoveryScript is injected into the page to find a visible ad element.
+// It returns a JSON-serialisable object with the ad's bounding rect and metadata.
+const adDiscoveryScript = `(function() {
+  var selectors = [
+    'ins.adsbygoogle',
+    'iframe[id*="google_ads"]',
+    'iframe[id*="aswift"]',
+    'div[id*="google_ads"]',
+    'div[id*="ad-container"]',
+    'div[class*="ad-slot"]',
+    'div[class*="ad-wrapper"]',
+    'div[data-ad]',
+    'iframe[data-google-container-id]',
+    'a[href*="googleads"]',
+    'a[href*="doubleclick"]'
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    var el = document.querySelector(selectors[i]);
+    if (el) {
+      var rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return {
+          found: true,
+          selector: selectors[i],
+          tag: el.tagName.toLowerCase(),
+          href: el.href || el.src || '',
+          x: Math.round(rect.x + rect.width / 2),
+          y: Math.round(rect.y + rect.height / 2)
+        };
+      }
+    }
+  }
+  return { found: false };
+})()`
+
+// adClickAtScript dispatches a mouse click at the given page coordinates.
+const adClickAtScript = `(function(x, y) {
+  var el = document.elementFromPoint(x, y);
+  if (el) {
+    el.dispatchEvent(new MouseEvent('click', {
+      bubbles: true, cancelable: true, view: window,
+      clientX: x, clientY: y
+    }));
+    return true;
+  }
+  return false;
+})`
+
+type adDiscoveryResult struct {
+	Found    bool    `json:"found"`
+	Selector string  `json:"selector"`
+	Tag      string  `json:"tag"`
+	Href     string  `json:"href"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+}
+
+// captureAdScreenshot takes a full-page screenshot labelled with the given tag
+// (e.g. "before", "after") and stores the path in both result.Screenshots and
+// result.ExtractedData. Errors are non-fatal and returned for the caller to log.
+func (r *Runner) captureAdScreenshot(ctx context.Context, result *models.TaskResult, keyPrefix, label string) (string, error) {
+	var buf []byte
+	if err := r.exec.Run(ctx, chromedp.FullScreenshot(&buf, 100)); err != nil {
+		return "", fmt.Errorf("capture ad screenshot (%s): %w", label, err)
+	}
+	sanitizedID := sanitizeFilename(result.TaskID)
+	filename := fmt.Sprintf("%s_ad_%s_%d.png", sanitizedID, label, time.Now().UnixMilli())
+	path := filepath.Join(r.screenshotDir, filename)
+	if !strings.HasPrefix(path, filepath.Clean(r.screenshotDir)+string(os.PathSeparator)) {
+		return "", fmt.Errorf("ad screenshot path escapes screenshot directory")
+	}
+	if err := os.WriteFile(path, buf, 0o644); err != nil {
+		return "", fmt.Errorf("save ad screenshot (%s): %w", label, err)
+	}
+	result.Screenshots = append(result.Screenshots, path)
+	result.ExtractedData[keyPrefix+"_screenshot_"+label] = path
+	return path, nil
+}
+
+func (r *Runner) execClickAd(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	keyPrefix := "ad"
+	if step.VarName != "" {
+		keyPrefix = step.VarName
+	}
+
+	// If a selector is explicitly provided, use it directly.
+	if strings.TrimSpace(step.Selector) != "" {
+		// Try to extract metadata before clicking.
+		metaJS := fmt.Sprintf(`(function() {
+  var el = document.querySelector(%q);
+  if (!el) return { found: false };
+  var rect = el.getBoundingClientRect();
+  return {
+    found: true,
+    selector: %q,
+    tag: el.tagName.toLowerCase(),
+    href: el.href || el.src || '',
+    x: Math.round(rect.x + rect.width / 2),
+    y: Math.round(rect.y + rect.height / 2)
+  };
+})()`, step.Selector, step.Selector)
+
+		var info adDiscoveryResult
+		if err := r.exec.Run(ctx, chromedp.Evaluate(metaJS, &info)); err != nil {
+			return fmt.Errorf("click_ad: evaluate selector metadata: %w", err)
+		}
+		if !info.Found {
+			return fmt.Errorf("click_ad: element not found for selector %q", step.Selector)
+		}
+
+		result.ExtractedData[keyPrefix+"_selector"] = info.Selector
+		result.ExtractedData[keyPrefix+"_tag"] = info.Tag
+		result.ExtractedData[keyPrefix+"_href"] = info.Href
+
+		// Capture before-click screenshot.
+		if _, err := r.captureAdScreenshot(ctx, result, keyPrefix, "before"); err != nil {
+			r.addLog(result, "warn", fmt.Sprintf("click_ad: %v", err))
+		}
+
+		// For iframes, dispatch a coordinate-based click since we can't enter cross-origin frames.
+		if info.Tag == "iframe" {
+			clickJS := fmt.Sprintf(`(%s)(%v, %v)`, adClickAtScript, info.X, info.Y)
+			var clicked bool
+			if err := r.exec.Run(ctx, chromedp.Evaluate(clickJS, &clicked)); err != nil {
+				return fmt.Errorf("click_ad: dispatch click on iframe: %w", err)
+			}
+			if !clicked {
+				return fmt.Errorf("click_ad: no element at iframe center (%v, %v)", info.X, info.Y)
+			}
+		} else {
+			// Regular element — use standard chromedp click.
+			if err := r.exec.Run(ctx,
+				chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+				chromedp.Click(step.Selector, chromedp.ByQuery),
+			); err != nil {
+				return err
+			}
+		}
+
+		// Capture after-click screenshot.
+		if _, err := r.captureAdScreenshot(ctx, result, keyPrefix, "after"); err != nil {
+			r.addLog(result, "warn", fmt.Sprintf("click_ad: %v", err))
+		}
+		return nil
+	}
+
+	// No selector provided — auto-discover an ad element.
+	var info adDiscoveryResult
+	if err := r.exec.Run(ctx, chromedp.Evaluate(adDiscoveryScript, &info)); err != nil {
+		return fmt.Errorf("click_ad: ad discovery failed: %w", err)
+	}
+	if !info.Found {
+		return fmt.Errorf("click_ad: no ad element found on page")
+	}
+
+	result.ExtractedData[keyPrefix+"_selector"] = info.Selector
+	result.ExtractedData[keyPrefix+"_tag"] = info.Tag
+	result.ExtractedData[keyPrefix+"_href"] = info.Href
+
+	// Capture before-click screenshot.
+	if _, err := r.captureAdScreenshot(ctx, result, keyPrefix, "before"); err != nil {
+		r.addLog(result, "warn", fmt.Sprintf("click_ad: %v", err))
+	}
+
+	// Dispatch a coordinate-based click (works for both iframes and regular elements).
+	clickJS := fmt.Sprintf(`(%s)(%v, %v)`, adClickAtScript, info.X, info.Y)
+	var clicked bool
+	if err := r.exec.Run(ctx, chromedp.Evaluate(clickJS, &clicked)); err != nil {
+		return fmt.Errorf("click_ad: dispatch click: %w", err)
+	}
+	if !clicked {
+		return fmt.Errorf("click_ad: no element at coordinates (%v, %v)", info.X, info.Y)
+	}
+
+	// Capture after-click screenshot.
+	if _, err := r.captureAdScreenshot(ctx, result, keyPrefix, "after"); err != nil {
+		r.addLog(result, "warn", fmt.Sprintf("click_ad: %v", err))
 	}
 	return nil
 }

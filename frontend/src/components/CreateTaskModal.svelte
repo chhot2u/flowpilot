@@ -29,7 +29,7 @@
   let errorMessage = '';
   let submitting = false;
 
-  const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select', 'if_element', 'if_text', 'if_url', 'loop', 'end_loop', 'break_loop', 'goto', 'solve_captcha'];
+  const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select', 'if_element', 'if_text', 'if_url', 'loop', 'end_loop', 'break_loop', 'goto', 'solve_captcha', 'click_ad'];
 
   ListProxyRoutingPresets().then((list) => {
     routingPresets = (list || []) as ProxyRoutingPreset[];

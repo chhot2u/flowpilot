@@ -13,3 +13,4 @@ cover.out
 
 # Session files
 session-*.md
+.blackboxcli/
