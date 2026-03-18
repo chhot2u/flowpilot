@@ -61,6 +61,54 @@ const (
 	ActionGetAttributes   StepAction = "get_attributes"
 )
 
+func ExecutableStepActions() []StepAction {
+	return []StepAction{
+		ActionNavigate,
+		ActionClick,
+		ActionType,
+		ActionWait,
+		ActionScreenshot,
+		ActionExtract,
+		ActionScroll,
+		ActionSelect,
+		ActionEval,
+		ActionTabSwitch,
+		ActionSolveCaptcha,
+		ActionDoubleClick,
+		ActionFileUpload,
+		ActionNavigateBack,
+		ActionNavigateForward,
+		ActionReload,
+		ActionScrollIntoView,
+		ActionSubmitForm,
+		ActionWaitNotPresent,
+		ActionWaitEnabled,
+		ActionWaitFunction,
+		ActionEmulateDevice,
+		ActionGetTitle,
+		ActionGetAttributes,
+	}
+}
+
+func ControlFlowStepActions() []StepAction {
+	return []StepAction{
+		ActionIfElement,
+		ActionIfText,
+		ActionIfURL,
+		ActionLoop,
+		ActionEndLoop,
+		ActionBreakLoop,
+		ActionGoto,
+	}
+}
+
+func SupportedStepActions() []StepAction {
+	actions := make([]StepAction, 0, len(ExecutableStepActions())+len(ControlFlowStepActions()))
+	actions = append(actions, ExecutableStepActions()...)
+	actions = append(actions, ControlFlowStepActions()...)
+	return actions
+}
+
 // TaskStep represents a single browser action within a task.
 type TaskStep struct {
 	Action    StepAction `json:"action"`

@@ -684,6 +684,65 @@ func TestCancelPendingTaskInHeap(t *testing.T) {
 	}
 }
 
+func TestCancelRunningTaskUpdatesStateAndEmitsEvent(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("cancel-running-1")
+	if err := db.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	cancelDone := make(chan struct{})
+	q.mu.Lock()
+	q.running[task.ID] = func() { close(cancelDone) }
+	q.mu.Unlock()
+
+	if err := q.Cancel(task.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	select {
+	case <-cancelDone:
+	case <-time.After(time.Second):
+		t.Fatal("running task cancel function was not called")
+	}
+
+	q.mu.Lock()
+	_, stillRunning := q.running[task.ID]
+	wasCancelled := q.cancelled[task.ID]
+	q.mu.Unlock()
+	if stillRunning {
+		t.Error("task should be removed from running map")
+	}
+	if !wasCancelled {
+		t.Error("task should be marked as cancelled")
+	}
+
+	got, err := db.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != models.TaskStatusCancelled {
+		t.Fatalf("status: got %q, want %q", got.Status, models.TaskStatusCancelled)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	foundCancelledEvent := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusCancelled {
+			foundCancelledEvent = true
+			break
+		}
+	}
+	if !foundCancelledEvent {
+		t.Error("expected cancelled event to be emitted")
+	}
+}
+
 func TestSubmitBatchSkipsDuplicates(t *testing.T) {
 	q, db := setupTestQueue(t, 10, nil, nil)
 	defer q.Stop()
@@ -843,6 +902,69 @@ func TestHandleFailureRetryStoppedByQueueStop(t *testing.T) {
 	}
 	if got.Status != models.TaskStatusCancelled {
 		t.Errorf("status: got %q, want %q", got.Status, models.TaskStatusCancelled)
+	}
+}
+
+func TestHandleFailureRetryResubmitsTask(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 10, &events, &mu)
+	defer q.Stop()
+
+	task := makeTestTask("fail-retry-success-1")
+	task.Steps = nil
+	task.RetryCount = 0
+	task.MaxRetries = 3
+	if err := db.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	ri := q.handleFailure(context.Background(), task, fmt.Errorf("temporary error"), nil)
+	if !ri.shouldRetry {
+		t.Fatal("expected shouldRetry to be true")
+	}
+
+	ri.backoff = 10 * time.Millisecond
+	q.scheduleRetry(ri)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, err := db.GetTask(context.Background(), task.ID)
+		if err != nil {
+			t.Fatalf("GetTask: %v", err)
+		}
+		if got.Status == models.TaskStatusCompleted {
+			if got.RetryCount != 1 {
+				t.Fatalf("retry_count: got %d, want 1", got.RetryCount)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task did not complete after retry, last status=%s retryCount=%d", got.Status, got.RetryCount)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	foundRetrying := false
+	foundCompleted := false
+	for _, e := range events {
+		if e.TaskID != task.ID {
+			continue
+		}
+		if e.Status == models.TaskStatusRetrying {
+			foundRetrying = true
+		}
+		if e.Status == models.TaskStatusCompleted {
+			foundCompleted = true
+		}
+	}
+	if !foundRetrying {
+		t.Error("expected retrying event to be emitted")
+	}
+	if !foundCompleted {
+		t.Error("expected completed event after retry re-submit")
 	}
 }
 
@@ -1196,6 +1318,45 @@ func TestStopClearsPausedHeap(t *testing.T) {
 	q.mu.Unlock()
 	if pausedLen != 0 {
 		t.Errorf("paused heap after Stop: got %d, want 0", pausedLen)
+	}
+}
+
+func TestStopClearsMainHeapTasks(t *testing.T) {
+	q, _ := setupTestQueue(t, 10, nil, nil)
+
+	cancel1Done := make(chan struct{})
+	cancel2Done := make(chan struct{})
+	q.mu.Lock()
+	now := time.Now()
+	heap.Push(&q.pq, &heapItem{task: models.Task{ID: "main-stop-1", Priority: models.PriorityNormal}, ctx: context.Background(), cancel: func() { close(cancel1Done) }, addedAt: now})
+	q.heapSet["main-stop-1"] = struct{}{}
+	heap.Push(&q.pq, &heapItem{task: models.Task{ID: "main-stop-2", Priority: models.PriorityNormal}, ctx: context.Background(), cancel: func() { close(cancel2Done) }, addedAt: now.Add(time.Millisecond)})
+	q.heapSet["main-stop-2"] = struct{}{}
+	q.mu.Unlock()
+
+	q.Stop()
+
+	select {
+	case <-cancel1Done:
+	case <-time.After(time.Second):
+		t.Error("cancel for main-stop-1 was not called")
+	}
+	select {
+	case <-cancel2Done:
+	case <-time.After(time.Second):
+		t.Error("cancel for main-stop-2 was not called")
+	}
+
+	q.mu.Lock()
+	pqLen := q.pq.Len()
+	_, exists1 := q.heapSet["main-stop-1"]
+	_, exists2 := q.heapSet["main-stop-2"]
+	q.mu.Unlock()
+	if pqLen != 0 {
+		t.Errorf("main heap after Stop: got %d, want 0", pqLen)
+	}
+	if exists1 || exists2 {
+		t.Error("heapSet entries should be removed on Stop")
 	}
 }
 

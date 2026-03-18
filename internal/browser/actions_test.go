@@ -302,3 +302,98 @@ func TestExecuteStepNewActionsDispatch(t *testing.T) {
 		})
 	}
 }
+
+func TestExecuteStepDispatchesAllExecutableActions(t *testing.T) {
+	for _, action := range models.ExecutableStepActions() {
+		t.Run(string(action), func(t *testing.T) {
+			mock := &mockExecutor{}
+			r := newMockRunner(t, mock)
+			if action == models.ActionEval || action == models.ActionWaitFunction {
+				r.allowEval.Store(true)
+			}
+			result := &models.TaskResult{TaskID: "dispatch-all", ExtractedData: make(map[string]string)}
+
+			step := validExecutableStep(action)
+			err := r.executeStep(context.Background(), step, result)
+			if err != nil && err.Error() == "unknown action: "+string(action) {
+				t.Fatalf("action %s was not dispatched correctly", action)
+			}
+		})
+	}
+}
+
+func TestExecuteStepRejectsMalformedExecutableSteps(t *testing.T) {
+	tests := []struct {
+		name       string
+		step       models.TaskStep
+		allowEval  bool
+		wantSubstr string
+	}{
+		{name: "click missing selector", step: models.TaskStep{Action: models.ActionClick}, wantSubstr: "selector is required"},
+		{name: "type missing selector", step: models.TaskStep{Action: models.ActionType, Value: "hello"}, wantSubstr: "selector is required"},
+		{name: "type missing value", step: models.TaskStep{Action: models.ActionType, Selector: "#input"}, wantSubstr: "value is required"},
+		{name: "file upload missing selector", step: models.TaskStep{Action: models.ActionFileUpload, Value: "/tmp/test.txt"}, wantSubstr: "selector is required"},
+		{name: "file upload missing value", step: models.TaskStep{Action: models.ActionFileUpload, Selector: "#file"}, wantSubstr: "value is required"},
+		{name: "tab switch missing value", step: models.TaskStep{Action: models.ActionTabSwitch}, wantSubstr: "value is required"},
+		{name: "wait function empty", step: models.TaskStep{Action: models.ActionWaitFunction}, allowEval: true, wantSubstr: "wait_function validation failed"},
+		{name: "get attributes missing selector", step: models.TaskStep{Action: models.ActionGetAttributes}, wantSubstr: "selector is required"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockExecutor{}
+			r := newMockRunner(t, mock)
+			r.allowEval.Store(tc.allowEval)
+			result := &models.TaskResult{TaskID: "dispatch-malformed", ExtractedData: make(map[string]string)}
+
+			err := r.executeStep(context.Background(), tc.step, result)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantSubstr, err)
+			}
+			if mock.callCount() != 0 {
+				t.Fatalf("expected 0 executor calls, got %d", mock.callCount())
+			}
+		})
+	}
+}
+
+func validExecutableStep(action models.StepAction) models.TaskStep {
+	switch action {
+	case models.ActionNavigate:
+		return models.TaskStep{Action: action, Value: "https://example.com"}
+	case models.ActionClick, models.ActionExtract, models.ActionDoubleClick,
+		models.ActionScrollIntoView, models.ActionSubmitForm,
+		models.ActionWaitNotPresent, models.ActionWaitEnabled,
+		models.ActionGetAttributes:
+		return models.TaskStep{Action: action, Selector: "#target"}
+	case models.ActionType:
+		return models.TaskStep{Action: action, Selector: "#target", Value: "hello"}
+	case models.ActionWait:
+		return models.TaskStep{Action: action, Value: "100"}
+	case models.ActionScreenshot, models.ActionNavigateBack,
+		models.ActionNavigateForward, models.ActionReload,
+		models.ActionGetTitle:
+		return models.TaskStep{Action: action}
+	case models.ActionScroll:
+		return models.TaskStep{Action: action, Value: "100"}
+	case models.ActionSelect:
+		return models.TaskStep{Action: action, Selector: "#target", Value: "option"}
+	case models.ActionEval:
+		return models.TaskStep{Action: action, Value: "1 + 1"}
+	case models.ActionTabSwitch:
+		return models.TaskStep{Action: action, Value: "https://example.com/tab"}
+	case models.ActionSolveCaptcha:
+		return models.TaskStep{Action: action, Selector: "site-key", Value: "recaptcha_v2"}
+	case models.ActionFileUpload:
+		return models.TaskStep{Action: action, Selector: "#file", Value: "/tmp/test.txt"}
+	case models.ActionWaitFunction:
+		return models.TaskStep{Action: action, Value: "document.readyState === 'complete'"}
+	case models.ActionEmulateDevice:
+		return models.TaskStep{Action: action, Value: "375x812"}
+	default:
+		return models.TaskStep{Action: action}
+	}
+}

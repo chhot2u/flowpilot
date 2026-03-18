@@ -428,6 +428,33 @@ func TestListHealthyProxies(t *testing.T) {
 	}
 }
 
+func TestListHealthyProxiesDecryptsCredentials(t *testing.T) {
+	db := setupTestDB(t)
+	p := makeProxy("hp-cred-1", "healthy.proxy.com:8080", "US")
+	p.Username = "healthy_user"
+	p.Password = "healthy_pass"
+	if err := db.CreateProxy(context.Background(), p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+	if err := db.UpdateProxyHealth(context.Background(), p.ID, models.ProxyStatusHealthy, 50); err != nil {
+		t.Fatalf("UpdateProxyHealth: %v", err)
+	}
+
+	healthy, err := db.ListHealthyProxies(context.Background())
+	if err != nil {
+		t.Fatalf("ListHealthyProxies: %v", err)
+	}
+	if len(healthy) != 1 {
+		t.Fatalf("healthy count: got %d, want 1", len(healthy))
+	}
+	if healthy[0].Username != "healthy_user" {
+		t.Errorf("decrypted username: got %q, want %q", healthy[0].Username, "healthy_user")
+	}
+	if healthy[0].Password != "healthy_pass" {
+		t.Errorf("decrypted password: got %q, want %q", healthy[0].Password, "healthy_pass")
+	}
+}
+
 func TestUpdateProxyHealth(t *testing.T) {
 	db := setupTestDB(t)
 	p := makeProxy("health-1", "health.example.com:8080", "US")
@@ -700,6 +727,44 @@ func TestUpdateTask(t *testing.T) {
 	}
 	if got.Proxy.Server != "new.proxy:9090" {
 		t.Errorf("Proxy.Server: got %q, want %q", got.Proxy.Server, "new.proxy:9090")
+	}
+}
+
+func TestUpdateTaskReencryptsProxyCredentials(t *testing.T) {
+	db := setupTestDB(t)
+	task := makeTask("upd-enc-1", "Original")
+	task.Proxy.Username = "first_user"
+	task.Proxy.Password = "first_pass"
+	if err := db.CreateTask(context.Background(), task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	newProxy := models.ProxyConfig{Server: "new.proxy:9090", Username: "second_user", Password: "second_pass"}
+	if err := db.UpdateTask(context.Background(), task.ID, "Updated", "https://updated.com", []models.TaskStep{{Action: models.ActionNavigate, Value: "https://updated.com"}}, newProxy, models.PriorityHigh, []string{"updated-tag"}, 0, nil); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+
+	var rawUsername, rawPassword string
+	err := db.conn.QueryRow(`SELECT proxy_username, proxy_password FROM tasks WHERE id = ?`, task.ID).Scan(&rawUsername, &rawPassword)
+	if err != nil {
+		t.Fatalf("raw query: %v", err)
+	}
+	if rawUsername == "second_user" {
+		t.Error("updated proxy_username stored in plaintext — expected ciphertext")
+	}
+	if rawPassword == "second_pass" {
+		t.Error("updated proxy_password stored in plaintext — expected ciphertext")
+	}
+
+	got, err := db.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Proxy.Username != "second_user" {
+		t.Errorf("decrypted updated proxy username: got %q, want %q", got.Proxy.Username, "second_user")
+	}
+	if got.Proxy.Password != "second_pass" {
+		t.Errorf("decrypted updated proxy password: got %q, want %q", got.Proxy.Password, "second_pass")
 	}
 }
 

@@ -529,6 +529,66 @@ func TestValidateTaskStepsTabSwitch(t *testing.T) {
 	}
 }
 
+func TestValidateTaskStepsSupportsAllModelActions(t *testing.T) {
+	for _, action := range models.SupportedStepActions() {
+		t.Run(string(action), func(t *testing.T) {
+			step := validTaskStepForValidation(action)
+			allowEval := action == models.ActionEval || action == models.ActionWaitFunction
+			if err := ValidateTaskSteps([]models.TaskStep{step}, allowEval); err != nil {
+				t.Fatalf("action %s should validate, got: %v", action, err)
+			}
+		})
+	}
+}
+
+func validTaskStepForValidation(action models.StepAction) models.TaskStep {
+	switch action {
+	case models.ActionNavigate:
+		return models.TaskStep{Action: action, Value: "https://example.com"}
+	case models.ActionClick, models.ActionExtract, models.ActionDoubleClick,
+		models.ActionScrollIntoView, models.ActionSubmitForm,
+		models.ActionWaitNotPresent, models.ActionWaitEnabled,
+		models.ActionGetAttributes:
+		return models.TaskStep{Action: action, Selector: "#target"}
+	case models.ActionType:
+		return models.TaskStep{Action: action, Selector: "#target", Value: "hello"}
+	case models.ActionWait:
+		return models.TaskStep{Action: action, Value: "100"}
+	case models.ActionScreenshot, models.ActionNavigateBack,
+		models.ActionNavigateForward, models.ActionReload,
+		models.ActionEndLoop, models.ActionBreakLoop, models.ActionGetTitle:
+		return models.TaskStep{Action: action}
+	case models.ActionScroll:
+		return models.TaskStep{Action: action, Value: "100"}
+	case models.ActionSelect:
+		return models.TaskStep{Action: action, Selector: "#target", Value: "option"}
+	case models.ActionEval:
+		return models.TaskStep{Action: action, Value: "1 + 1"}
+	case models.ActionTabSwitch:
+		return models.TaskStep{Action: action, Value: "https://example.com/tab"}
+	case models.ActionIfElement:
+		return models.TaskStep{Action: action, Selector: "#target"}
+	case models.ActionIfText:
+		return models.TaskStep{Action: action, Selector: "#target", Condition: "contains:ok"}
+	case models.ActionIfURL:
+		return models.TaskStep{Action: action, Condition: "contains:example.com"}
+	case models.ActionLoop:
+		return models.TaskStep{Action: action, Value: "3"}
+	case models.ActionGoto:
+		return models.TaskStep{Action: action, JumpTo: "done"}
+	case models.ActionSolveCaptcha:
+		return models.TaskStep{Action: action, Selector: "site-key", Value: "recaptcha_v2"}
+	case models.ActionFileUpload:
+		return models.TaskStep{Action: action, Selector: "#file", Value: "/tmp/test.txt"}
+	case models.ActionWaitFunction:
+		return models.TaskStep{Action: action, Value: "document.readyState === 'complete'"}
+	case models.ActionEmulateDevice:
+		return models.TaskStep{Action: action, Value: "375x812"}
+	default:
+		return models.TaskStep{Action: action}
+	}
+}
+
 func TestValidateTaskStepsMultipleErrors(t *testing.T) {
 	steps := []models.TaskStep{
 		{Action: models.ActionNavigate, Value: "https://example.com"},

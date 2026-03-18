@@ -43,32 +43,39 @@ var (
 	ErrInvalidTimeout      = errors.New("timeout must be between 0 and 3600 seconds")
 )
 
-var validActions = map[models.StepAction]bool{
-	models.ActionNavigate:     true,
-	models.ActionClick:        true,
-	models.ActionType:         true,
-	models.ActionWait:         true,
-	models.ActionScreenshot:   true,
-	models.ActionExtract:      true,
-	models.ActionScroll:       true,
-	models.ActionSelect:       true,
-	models.ActionEval:         true,
-	models.ActionTabSwitch:    true,
-	models.ActionIfElement:    true,
-	models.ActionIfText:       true,
-	models.ActionIfURL:        true,
-	models.ActionLoop:         true,
-	models.ActionEndLoop:      true,
-	models.ActionBreakLoop:    true,
-	models.ActionGoto:         true,
-	models.ActionSolveCaptcha: true,
-}
+var validActions = func() map[models.StepAction]bool {
+	actions := make(map[models.StepAction]bool, len(models.SupportedStepActions()))
+	for _, action := range models.SupportedStepActions() {
+		actions[action] = true
+	}
+	return actions
+}()
 
 var selectorRequiredActions = map[models.StepAction]bool{
-	models.ActionClick:   true,
-	models.ActionType:    true,
-	models.ActionExtract: true,
-	models.ActionSelect:  true,
+	models.ActionClick:          true,
+	models.ActionType:           true,
+	models.ActionExtract:        true,
+	models.ActionSelect:         true,
+	models.ActionIfElement:      true,
+	models.ActionIfText:         true,
+	models.ActionSolveCaptcha:   true,
+	models.ActionDoubleClick:    true,
+	models.ActionFileUpload:     true,
+	models.ActionScrollIntoView: true,
+	models.ActionSubmitForm:     true,
+	models.ActionWaitNotPresent: true,
+	models.ActionWaitEnabled:    true,
+	models.ActionGetAttributes:  true,
+}
+
+var valueRequiredActions = map[models.StepAction]bool{
+	models.ActionNavigate:      true,
+	models.ActionScroll:        true,
+	models.ActionEval:          true,
+	models.ActionSolveCaptcha:  true,
+	models.ActionFileUpload:    true,
+	models.ActionWaitFunction:  true,
+	models.ActionEmulateDevice: true,
 }
 
 var validPriorities = map[models.TaskPriority]bool{
@@ -157,10 +164,11 @@ func ValidateTaskSteps(steps []models.TaskStep, allowEval bool) error {
 			return fmt.Errorf("step %d: %w", i, ErrEvalNotAllowed)
 		}
 
+		if valueRequiredActions[step.Action] && strings.TrimSpace(step.Value) == "" {
+			return fmt.Errorf("step %d: %w", i, ErrStepMissingValue)
+		}
+
 		if step.Action == models.ActionNavigate {
-			if strings.TrimSpace(step.Value) == "" {
-				return fmt.Errorf("step %d: %w", i, ErrStepMissingValue)
-			}
 			if err := ValidateTaskURL(step.Value); err != nil {
 				return fmt.Errorf("step %d: %w", i, ErrStepInvalidURL)
 			}

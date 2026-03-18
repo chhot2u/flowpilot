@@ -82,7 +82,24 @@ func (r *Runner) execNavigate(ctx context.Context, step models.TaskStep) error {
 	return nil
 }
 
+func requireSelector(action, selector string) error {
+	if strings.TrimSpace(selector) == "" {
+		return fmt.Errorf("%s: selector is required", action)
+	}
+	return nil
+}
+
+func requireValue(action, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s: value is required", action)
+	}
+	return nil
+}
+
 func (r *Runner) execClick(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("click", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Click(step.Selector, chromedp.ByQuery),
@@ -90,6 +107,12 @@ func (r *Runner) execClick(ctx context.Context, step models.TaskStep) error {
 }
 
 func (r *Runner) execType(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("type", step.Selector); err != nil {
+		return err
+	}
+	if err := requireValue("type", step.Value); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Clear(step.Selector, chromedp.ByQuery),
@@ -146,6 +169,9 @@ func sanitizeFilename(name string) string {
 }
 
 func (r *Runner) execExtract(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("extract", step.Selector); err != nil {
+		return err
+	}
 	var text string
 	if err := r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
@@ -171,6 +197,12 @@ func (r *Runner) execScroll(ctx context.Context, step models.TaskStep) error {
 }
 
 func (r *Runner) execSelect(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("select", step.Selector); err != nil {
+		return err
+	}
+	if err := requireValue("select", step.Value); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.SetValue(step.Selector, step.Value, chromedp.ByQuery),
@@ -191,6 +223,9 @@ func (r *Runner) execEval(ctx context.Context, step models.TaskStep) error {
 }
 
 func (r *Runner) execTabSwitch(ctx context.Context, step models.TaskStep) error {
+	if err := requireValue("tab_switch", step.Value); err != nil {
+		return err
+	}
 	targets, err := r.exec.Targets(ctx)
 	if err != nil {
 		return fmt.Errorf("list targets: %w", err)
@@ -244,6 +279,9 @@ func (r *Runner) execSolveCaptcha(ctx context.Context, step models.TaskStep, res
 }
 
 func (r *Runner) execDoubleClick(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("double_click", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.DoubleClick(step.Selector, chromedp.ByQuery),
@@ -251,6 +289,12 @@ func (r *Runner) execDoubleClick(ctx context.Context, step models.TaskStep) erro
 }
 
 func (r *Runner) execFileUpload(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("file_upload", step.Selector); err != nil {
+		return err
+	}
+	if err := requireValue("file_upload", step.Value); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.SetUploadFiles(step.Selector, []string{step.Value}, chromedp.ByQuery),
@@ -270,12 +314,18 @@ func (r *Runner) execReload(ctx context.Context) error {
 }
 
 func (r *Runner) execScrollIntoView(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("scroll_into_view", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.ScrollIntoView(step.Selector, chromedp.ByQuery),
 	)
 }
 
 func (r *Runner) execSubmitForm(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("submit_form", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
 		chromedp.Submit(step.Selector, chromedp.ByQuery),
@@ -283,12 +333,18 @@ func (r *Runner) execSubmitForm(ctx context.Context, step models.TaskStep) error
 }
 
 func (r *Runner) execWaitNotPresent(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("wait_not_present", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitNotPresent(step.Selector, chromedp.ByQuery),
 	)
 }
 
 func (r *Runner) execWaitEnabled(ctx context.Context, step models.TaskStep) error {
+	if err := requireSelector("wait_enabled", step.Selector); err != nil {
+		return err
+	}
 	return r.exec.Run(ctx,
 		chromedp.WaitEnabled(step.Selector, chromedp.ByQuery),
 	)
@@ -349,6 +405,9 @@ func (r *Runner) execGetTitle(ctx context.Context, step models.TaskStep, result 
 }
 
 func (r *Runner) execGetAttributes(ctx context.Context, step models.TaskStep, result *models.TaskResult) error {
+	if err := requireSelector("get_attributes", step.Selector); err != nil {
+		return err
+	}
 	var attrs map[string]string
 	if err := r.exec.Run(ctx,
 		chromedp.WaitVisible(step.Selector, chromedp.ByQuery),

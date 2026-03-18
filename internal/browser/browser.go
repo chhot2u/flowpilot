@@ -39,8 +39,8 @@ var ErrEvalNotAllowed = errors.New("eval action is not allowed: runner has allow
 var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bchild_process\b`),
 	regexp.MustCompile(`(?i)\brequire\s*\(`),
-	regexp.MustCompile(`(?i)\bprocess\.exit\b`),
-	regexp.MustCompile(`(?i)\bprocess\.env\b`),
+	regexp.MustCompile(`(?i)\bprocess\s*\.\s*exit\b`),
+	regexp.MustCompile(`(?i)\bprocess\s*\.\s*env\b`),
 	regexp.MustCompile(`(?i)\bfs\s*\.\s*(read|write|unlink|mkdir|rmdir)`),
 	regexp.MustCompile(`(?i)\b__dirname\b`),
 	regexp.MustCompile(`(?i)\b__filename\b`),
