@@ -19,6 +19,7 @@ export namespace models {
 	        this.username = source["username"];
 	        this.password = source["password"];
 	        this.geo = source["geo"];
+	        this.fallback = source["fallback"];
 	    }
 	}
 	export class AdvancedBatchInput {
@@ -181,6 +182,50 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class CaptchaConfig {
+	    id: string;
+	    provider: string;
+	    apiKey: string;
+	    enabled: boolean;
+	    balance?: number;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new CaptchaConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.apiKey = source["apiKey"];
+	        this.enabled = source["enabled"];
+	        this.balance = source["balance"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class DOMSnapshot {
 	    id: string;
 	    flowId: string;
@@ -224,6 +269,44 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class DiffRequest {
+	    baselineId: string;
+	    taskId: string;
+	    threshold: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baselineId = source["baselineId"];
+	        this.taskId = source["taskId"];
+	        this.threshold = source["threshold"];
+	    }
+	}
+	export class LocalProxyGatewayStats {
+	    activeEndpoints: number;
+	    endpointCreations: number;
+	    endpointReuses: number;
+	    authFailures: number;
+	    upstreamFailures: number;
+	    lastError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalProxyGatewayStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.activeEndpoints = source["activeEndpoints"];
+	        this.endpointCreations = source["endpointCreations"];
+	        this.endpointReuses = source["endpointReuses"];
+	        this.authFailures = source["authFailures"];
+	        this.upstreamFailures = source["upstreamFailures"];
+	        this.lastError = source["lastError"];
+	    }
+	}
 	export class LogEntry {
 	    // Go type: time
 	    timestamp: any;
@@ -258,6 +341,79 @@ export namespace models {
 		    }
 		    return a;
 		}
+	}
+	export class NetworkLog {
+	    taskId: string;
+	    stepIndex: number;
+	    requestUrl: string;
+	    method: string;
+	    statusCode: number;
+	    mimeType?: string;
+	    requestHeaders?: string;
+	    responseHeaders?: string;
+	    requestSize: number;
+	    responseSize: number;
+	    durationMs: number;
+	    error?: string;
+	    // Go type: time
+	    timestamp: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new NetworkLog(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.taskId = source["taskId"];
+	        this.stepIndex = source["stepIndex"];
+	        this.requestUrl = source["requestUrl"];
+	        this.method = source["method"];
+	        this.statusCode = source["statusCode"];
+	        this.mimeType = source["mimeType"];
+	        this.requestHeaders = source["requestHeaders"];
+	        this.responseHeaders = source["responseHeaders"];
+	        this.requestSize = source["requestSize"];
+	        this.responseSize = source["responseSize"];
+	        this.durationMs = source["durationMs"];
+	        this.error = source["error"];
+	        this.timestamp = this.convertValues(source["timestamp"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TaskLoggingPolicy {
+	    captureStepLogs?: boolean;
+	    captureNetworkLogs?: boolean;
+	    captureScreenshots?: boolean;
+	    maxExecutionLogs?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TaskLoggingPolicy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.captureStepLogs = source["captureStepLogs"];
+	        this.captureNetworkLogs = source["captureNetworkLogs"];
+	        this.captureScreenshots = source["captureScreenshots"];
+	        this.maxExecutionLogs = source["maxExecutionLogs"];
+	    }
 	}
 	export class StepLog {
 	    taskId: string;
@@ -315,6 +471,7 @@ export namespace models {
 	    screenshots?: string[];
 	    logs: LogEntry[];
 	    stepLogs?: StepLog[];
+	    networkLogs?: NetworkLog[];
 	    duration: number;
 	    error?: string;
 	
@@ -330,6 +487,7 @@ export namespace models {
 	        this.screenshots = source["screenshots"];
 	        this.logs = this.convertValues(source["logs"], LogEntry);
 	        this.stepLogs = this.convertValues(source["stepLogs"], StepLog);
+	        this.networkLogs = this.convertValues(source["networkLogs"], NetworkLog);
 	        this.duration = source["duration"];
 	        this.error = source["error"];
 	    }
@@ -351,24 +509,6 @@ export namespace models {
 		    }
 		    return a;
 		}
-	}
-	export class TaskLoggingPolicy {
-	    captureStepLogs?: boolean;
-	    captureNetworkLogs?: boolean;
-	    captureScreenshots?: boolean;
-	    maxExecutionLogs: number;
-
-	    static createFrom(source: any = {}) {
-	        return new TaskLoggingPolicy(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.captureStepLogs = source["captureStepLogs"];
-	        this.captureNetworkLogs = source["captureNetworkLogs"];
-	        this.captureScreenshots = source["captureScreenshots"];
-	        this.maxExecutionLogs = source["maxExecutionLogs"];
-	    }
 	}
 	export class Task {
 	    id: string;
@@ -543,77 +683,71 @@ export namespace models {
 	}
 	
 	export class ProxyCountryStats {
-    country: string;
-    total: number;
-    healthy: number;
-    activeReservations: number;
-    totalUsed: number;
-    fallbackAssignments: number;
-    activeLocalEndpoints: number;
-
-    static createFrom(source: any = {}) {
-        return new ProxyCountryStats(source);
-    }
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.country = source["country"];
-        this.total = source["total"];
-        this.healthy = source["healthy"];
-        this.activeReservations = source["activeReservations"];
-        this.totalUsed = source["totalUsed"];
-        this.fallbackAssignments = source["fallbackAssignments"];
-        this.activeLocalEndpoints = source["activeLocalEndpoints"];
-    }
-}
-
-export class ProxyRoutingPreset {
-    id: string;
-    name: string;
-    randomByCountry: boolean;
-    country?: string;
-    fallback?: string;
-    createdAt: any;
-
-    static createFrom(source: any = {}) {
-        return new ProxyRoutingPreset(source);
-    }
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.id = source["id"];
-        this.name = source["name"];
-        this.randomByCountry = source["randomByCountry"];
-        this.country = source["country"];
-        this.fallback = source["fallback"];
-        this.createdAt = source["createdAt"];
-    }
-}
-
-export class LocalProxyGatewayStats {
-    activeEndpoints: number;
-    endpointCreations: number;
-    endpointReuses: number;
-    authFailures: number;
-    upstreamFailures: number;
-    lastError?: string;
-
-    static createFrom(source: any = {}) {
-        return new LocalProxyGatewayStats(source);
-    }
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.activeEndpoints = source["activeEndpoints"];
-        this.endpointCreations = source["endpointCreations"];
-        this.endpointReuses = source["endpointReuses"];
-        this.authFailures = source["authFailures"];
-        this.upstreamFailures = source["upstreamFailures"];
-        this.lastError = source["lastError"];
-    }
-}
-
-export class QueueMetrics {
+	    country: string;
+	    total: number;
+	    healthy: number;
+	    activeReservations: number;
+	    totalUsed: number;
+	    fallbackAssignments: number;
+	    activeLocalEndpoints: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxyCountryStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.country = source["country"];
+	        this.total = source["total"];
+	        this.healthy = source["healthy"];
+	        this.activeReservations = source["activeReservations"];
+	        this.totalUsed = source["totalUsed"];
+	        this.fallbackAssignments = source["fallbackAssignments"];
+	        this.activeLocalEndpoints = source["activeLocalEndpoints"];
+	    }
+	}
+	export class ProxyRoutingPreset {
+	    id: string;
+	    name: string;
+	    randomByCountry: boolean;
+	    country?: string;
+	    fallback?: string;
+	    // Go type: time
+	    createdAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxyRoutingPreset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.randomByCountry = source["randomByCountry"];
+	        this.country = source["country"];
+	        this.fallback = source["fallback"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class QueueMetrics {
 	    running: number;
 	    queued: number;
 	    pending: number;
@@ -751,6 +885,66 @@ export class QueueMetrics {
 		}
 	}
 	
+	export class Schedule {
+	    id: string;
+	    name: string;
+	    cronExpr: string;
+	    flowId: string;
+	    url: string;
+	    proxy: ProxyConfig;
+	    priority: number;
+	    headless: boolean;
+	    tags?: string[];
+	    enabled: boolean;
+	    // Go type: time
+	    lastRunAt?: any;
+	    // Go type: time
+	    nextRunAt?: any;
+	    // Go type: time
+	    createdAt: any;
+	    // Go type: time
+	    updatedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Schedule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.cronExpr = source["cronExpr"];
+	        this.flowId = source["flowId"];
+	        this.url = source["url"];
+	        this.proxy = this.convertValues(source["proxy"], ProxyConfig);
+	        this.priority = source["priority"];
+	        this.headless = source["headless"];
+	        this.tags = source["tags"];
+	        this.enabled = source["enabled"];
+	        this.lastRunAt = this.convertValues(source["lastRunAt"], null);
+	        this.nextRunAt = this.convertValues(source["nextRunAt"], null);
+	        this.createdAt = this.convertValues(source["createdAt"], null);
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	
 	
@@ -799,80 +993,7 @@ export class QueueMetrics {
 	}
 	
 	
-	export class Schedule {
-	    id: string;
-	    name: string;
-	    cronExpr: string;
-	    flowId: string;
-	    url: string;
-	    proxy: ProxyConfig;
-	    priority: number;
-	    headless: boolean;
-	    tags?: string[];
-	    enabled: boolean;
-	    lastRunAt?: any;
-	    nextRunAt?: any;
-	    createdAt: any;
-	    updatedAt: any;
 	
-	    static createFrom(source: any = {}) {
-	        return new Schedule(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.cronExpr = source["cronExpr"];
-	        this.flowId = source["flowId"];
-	        this.url = source["url"];
-	        this.proxy = this.convertValues(source["proxy"], ProxyConfig);
-	        this.priority = source["priority"];
-	        this.headless = source["headless"];
-	        this.tags = source["tags"];
-	        this.enabled = source["enabled"];
-	        this.lastRunAt = source["lastRunAt"];
-	        this.nextRunAt = source["nextRunAt"];
-	        this.createdAt = source["createdAt"];
-	        this.updatedAt = source["updatedAt"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) { return a; }
-		    if (a.slice && a.map) { return (a as any[]).map(elem => this.convertValues(elem, classs)); }
-		    else if ("object" === typeof a) {
-		        if (asMap) { for (const key of Object.keys(a)) { a[key] = new classs(a[key]); } return a; }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-	export class CaptchaConfig {
-	    id: string;
-	    provider: string;
-	    apiKey: string;
-	    enabled: boolean;
-	    balance?: number;
-	    createdAt: any;
-	    updatedAt: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new CaptchaConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.provider = source["provider"];
-	        this.apiKey = source["apiKey"];
-	        this.enabled = source["enabled"];
-	        this.balance = source["balance"];
-	        this.createdAt = source["createdAt"];
-	        this.updatedAt = source["updatedAt"];
-	    }
-	}
-
 	export class VisualBaseline {
 	    id: string;
 	    name: string;
@@ -881,6 +1002,7 @@ export class QueueMetrics {
 	    screenshotPath: string;
 	    width: number;
 	    height: number;
+	    // Go type: time
 	    createdAt: any;
 	
 	    static createFrom(source: any = {}) {
@@ -896,10 +1018,27 @@ export class QueueMetrics {
 	        this.screenshotPath = source["screenshotPath"];
 	        this.width = source["width"];
 	        this.height = source["height"];
-	        this.createdAt = source["createdAt"];
+	        this.createdAt = this.convertValues(source["createdAt"], null);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
-
 	export class VisualDiff {
 	    id: string;
 	    baselineId: string;
@@ -912,6 +1051,7 @@ export class QueueMetrics {
 	    passed: boolean;
 	    width: number;
 	    height: number;
+	    // Go type: time
 	    createdAt: any;
 	
 	    static createFrom(source: any = {}) {
@@ -931,27 +1071,27 @@ export class QueueMetrics {
 	        this.passed = source["passed"];
 	        this.width = source["width"];
 	        this.height = source["height"];
-	        this.createdAt = source["createdAt"];
-	    }
-	}
-
-	export class DiffRequest {
-	    baselineId: string;
-	    taskId: string;
-	    threshold: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new DiffRequest(source);
+	        this.createdAt = this.convertValues(source["createdAt"], null);
 	    }
 	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.baselineId = source["baselineId"];
-	        this.taskId = source["taskId"];
-	        this.threshold = source["threshold"];
-	    }
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
-
 	export class WebSocketLog {
 	    flowId: string;
 	    stepIndex: number;

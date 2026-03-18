@@ -10,6 +10,10 @@ export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
 
+export function CompareVisual(arg1) {
+  return window['go']['main']['App']['CompareVisual'](arg1);
+}
+
 export function CreateBatch(arg1, arg2) {
   return window['go']['main']['App']['CreateBatch'](arg1, arg2);
 }
@@ -18,8 +22,16 @@ export function CreateBatchFromFlow(arg1) {
   return window['go']['main']['App']['CreateBatchFromFlow'](arg1);
 }
 
+export function CreateProxyRoutingPreset(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CreateProxyRoutingPreset'](arg1, arg2, arg3, arg4);
+}
+
 export function CreateRecordedFlow(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CreateRecordedFlow'](arg1, arg2, arg3, arg4);
+}
+
+export function CreateSchedule(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['CreateSchedule'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function CreateTask(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
@@ -30,16 +42,36 @@ export function CreateTaskFromFlow(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['CreateTaskFromFlow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function CreateVisualBaseline(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateVisualBaseline'](arg1, arg2, arg3);
+}
+
+export function DeleteCaptchaConfig(arg1) {
+  return window['go']['main']['App']['DeleteCaptchaConfig'](arg1);
+}
+
 export function DeleteProxy(arg1) {
   return window['go']['main']['App']['DeleteProxy'](arg1);
+}
+
+export function DeleteProxyRoutingPreset(arg1) {
+  return window['go']['main']['App']['DeleteProxyRoutingPreset'](arg1);
 }
 
 export function DeleteRecordedFlow(arg1) {
   return window['go']['main']['App']['DeleteRecordedFlow'](arg1);
 }
 
+export function DeleteSchedule(arg1) {
+  return window['go']['main']['App']['DeleteSchedule'](arg1);
+}
+
 export function DeleteTask(arg1) {
   return window['go']['main']['App']['DeleteTask'](arg1);
+}
+
+export function DeleteVisualBaseline(arg1) {
+  return window['go']['main']['App']['DeleteVisualBaseline'](arg1);
 }
 
 export function ExportBatchLogs(arg1) {
@@ -66,6 +98,14 @@ export function GetBatchProgress(arg1) {
   return window['go']['main']['App']['GetBatchProgress'](arg1);
 }
 
+export function GetCaptchaConfig() {
+  return window['go']['main']['App']['GetCaptchaConfig']();
+}
+
+export function GetLocalProxyGatewayStats() {
+  return window['go']['main']['App']['GetLocalProxyGatewayStats']();
+}
+
 export function GetQueueMetrics() {
   return window['go']['main']['App']['GetQueueMetrics']();
 }
@@ -78,6 +118,10 @@ export function GetRunningCount() {
   return window['go']['main']['App']['GetRunningCount']();
 }
 
+export function GetSchedule(arg1) {
+  return window['go']['main']['App']['GetSchedule'](arg1);
+}
+
 export function GetTask(arg1) {
   return window['go']['main']['App']['GetTask'](arg1);
 }
@@ -86,12 +130,20 @@ export function GetTaskStats() {
   return window['go']['main']['App']['GetTaskStats']();
 }
 
+export function GetVisualDiff(arg1) {
+  return window['go']['main']['App']['GetVisualDiff'](arg1);
+}
+
 export function IsRecording() {
   return window['go']['main']['App']['IsRecording']();
 }
 
 export function ListBatchGroups() {
   return window['go']['main']['App']['ListBatchGroups']();
+}
+
+export function ListCaptchaConfigs() {
+  return window['go']['main']['App']['ListCaptchaConfigs']();
 }
 
 export function ListDOMSnapshots(arg1) {
@@ -106,24 +158,16 @@ export function ListProxyCountryStats() {
   return window['go']['main']['App']['ListProxyCountryStats']();
 }
 
-export function CreateProxyRoutingPreset(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['CreateProxyRoutingPreset'](arg1, arg2, arg3, arg4);
-}
-
 export function ListProxyRoutingPresets() {
   return window['go']['main']['App']['ListProxyRoutingPresets']();
 }
 
-export function DeleteProxyRoutingPreset(arg1) {
-  return window['go']['main']['App']['DeleteProxyRoutingPreset'](arg1);
-}
-
-export function GetLocalProxyGatewayStats() {
-  return window['go']['main']['App']['GetLocalProxyGatewayStats']();
-}
-
 export function ListRecordedFlows() {
   return window['go']['main']['App']['ListRecordedFlows']();
+}
+
+export function ListSchedules() {
+  return window['go']['main']['App']['ListSchedules']();
 }
 
 export function ListTaskEvents(arg1) {
@@ -146,12 +190,28 @@ export function ListTasksPaginated(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListTasksPaginated'](arg1, arg2, arg3, arg4);
 }
 
+export function ListVisualBaselines() {
+  return window['go']['main']['App']['ListVisualBaselines']();
+}
+
+export function ListVisualDiffs(arg1) {
+  return window['go']['main']['App']['ListVisualDiffs'](arg1);
+}
+
+export function ListVisualDiffsByTask(arg1) {
+  return window['go']['main']['App']['ListVisualDiffsByTask'](arg1);
+}
+
 export function ListWebSocketLogs(arg1) {
   return window['go']['main']['App']['ListWebSocketLogs'](arg1);
 }
 
 export function ParseBatchURLs(arg1, arg2) {
   return window['go']['main']['App']['ParseBatchURLs'](arg1, arg2);
+}
+
+export function PauseBatch(arg1) {
+  return window['go']['main']['App']['PauseBatch'](arg1);
 }
 
 export function PlayRecordedFlow(arg1, arg2, arg3) {
@@ -162,8 +222,16 @@ export function PurgeOldData(arg1) {
   return window['go']['main']['App']['PurgeOldData'](arg1);
 }
 
+export function ResumeBatch(arg1) {
+  return window['go']['main']['App']['ResumeBatch'](arg1);
+}
+
 export function RetryFailedBatch(arg1) {
   return window['go']['main']['App']['RetryFailedBatch'](arg1);
+}
+
+export function SaveCaptchaConfig(arg1, arg2) {
+  return window['go']['main']['App']['SaveCaptchaConfig'](arg1, arg2);
 }
 
 export function SaveDOMSnapshot(arg1) {
@@ -186,90 +254,26 @@ export function StopRecording() {
   return window['go']['main']['App']['StopRecording']();
 }
 
-export function UpdateRecordedFlow(arg1) {
-  return window['go']['main']['App']['UpdateRecordedFlow'](arg1);
-}
-
-export function UpdateTask(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['main']['App']['UpdateTask'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
-}
-
-export function CreateSchedule(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['CreateSchedule'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
-}
-
-export function GetSchedule(arg1) {
-  return window['go']['main']['App']['GetSchedule'](arg1);
-}
-
-export function ListSchedules() {
-  return window['go']['main']['App']['ListSchedules']();
-}
-
-export function UpdateSchedule(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
-  return window['go']['main']['App']['UpdateSchedule'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
-}
-
-export function DeleteSchedule(arg1) {
-  return window['go']['main']['App']['DeleteSchedule'](arg1);
-}
-
-export function ToggleSchedule(arg1, arg2) {
-  return window['go']['main']['App']['ToggleSchedule'](arg1, arg2);
-}
-
-export function SaveCaptchaConfig(arg1, arg2) {
-  return window['go']['main']['App']['SaveCaptchaConfig'](arg1, arg2);
-}
-
-export function GetCaptchaConfig() {
-  return window['go']['main']['App']['GetCaptchaConfig']();
-}
-
-export function ListCaptchaConfigs() {
-  return window['go']['main']['App']['ListCaptchaConfigs']();
-}
-
-export function DeleteCaptchaConfig(arg1) {
-  return window['go']['main']['App']['DeleteCaptchaConfig'](arg1);
+export function SubmitScheduledTask(arg1, arg2) {
+  return window['go']['main']['App']['SubmitScheduledTask'](arg1, arg2);
 }
 
 export function TestCaptchaConfig(arg1) {
   return window['go']['main']['App']['TestCaptchaConfig'](arg1);
 }
 
-export function CreateVisualBaseline(arg1, arg2, arg3) {
-  return window['go']['main']['App']['CreateVisualBaseline'](arg1, arg2, arg3);
+export function ToggleSchedule(arg1, arg2) {
+  return window['go']['main']['App']['ToggleSchedule'](arg1, arg2);
 }
 
-export function ListVisualBaselines() {
-  return window['go']['main']['App']['ListVisualBaselines']();
+export function UpdateRecordedFlow(arg1) {
+  return window['go']['main']['App']['UpdateRecordedFlow'](arg1);
 }
 
-export function DeleteVisualBaseline(arg1) {
-  return window['go']['main']['App']['DeleteVisualBaseline'](arg1);
+export function UpdateSchedule(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['main']['App']['UpdateSchedule'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
-export function CompareVisual(arg1) {
-  return window['go']['main']['App']['CompareVisual'](arg1);
-}
-
-export function ListVisualDiffs(arg1) {
-  return window['go']['main']['App']['ListVisualDiffs'](arg1);
-}
-
-export function ListVisualDiffsByTask(arg1) {
-  return window['go']['main']['App']['ListVisualDiffsByTask'](arg1);
-}
-
-export function GetVisualDiff(arg1) {
-  return window['go']['main']['App']['GetVisualDiff'](arg1);
-}
-
-export function PauseBatch(arg1) {
-  return window['go']['main']['App']['PauseBatch'](arg1);
-}
-
-export function ResumeBatch(arg1) {
-  return window['go']['main']['App']['ResumeBatch'](arg1);
+export function UpdateTask(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['UpdateTask'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
