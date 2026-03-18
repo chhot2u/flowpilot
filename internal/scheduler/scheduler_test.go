@@ -88,15 +88,21 @@ func TestParseCronComma(t *testing.T) {
 }
 
 type mockScheduleDB struct {
-	mu        sync.Mutex
-	schedules []models.Schedule
-	flows     map[string]*models.RecordedFlow
-	updated   map[string]time.Time
+	mu          sync.Mutex
+	schedules   []models.Schedule
+	flows       map[string]*models.RecordedFlow
+	updated     map[string]time.Time
+	listErr     error
+	updateErr   error
+	updateErrBy map[string]error
 }
 
 func (m *mockScheduleDB) ListDueSchedules(ctx context.Context, now time.Time) ([]models.Schedule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
 	var due []models.Schedule
 	for _, s := range m.schedules {
 		if s.Enabled && s.NextRunAt != nil && !s.NextRunAt.After(now) {
@@ -109,6 +115,12 @@ func (m *mockScheduleDB) ListDueSchedules(ctx context.Context, now time.Time) ([
 func (m *mockScheduleDB) UpdateScheduleRun(ctx context.Context, id string, lastRun, nextRun time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err, ok := m.updateErrBy[id]; ok {
+		return err
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
 	m.updated[id] = lastRun
 	return nil
 }
@@ -123,11 +135,15 @@ func (m *mockScheduleDB) GetRecordedFlow(ctx context.Context, id string) (*model
 type mockSubmitter struct {
 	mu        sync.Mutex
 	submitted []models.Schedule
+	errByID   map[string]error
 }
 
 func (m *mockSubmitter) SubmitScheduledTask(ctx context.Context, sched models.Schedule) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err, ok := m.errByID[sched.ID]; ok {
+		return err
+	}
 	m.submitted = append(m.submitted, sched)
 	return nil
 }
@@ -167,4 +183,60 @@ func TestSchedulerStartStop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	s.Stop()
 	cancel()
+}
+
+func TestSchedulerTickLogsFailures(t *testing.T) {
+	past := time.Now().Add(-1 * time.Minute)
+	db := &mockScheduleDB{
+		schedules: []models.Schedule{
+			{ID: "bad-cron", Name: "Bad Cron", CronExpr: "bad", Enabled: true, NextRunAt: &past},
+			{ID: "submit-fail", Name: "Submit Fail", CronExpr: "* * * * *", Enabled: true, NextRunAt: &past},
+			{ID: "update-fail", Name: "Update Fail", CronExpr: "* * * * *", Enabled: true, NextRunAt: &past},
+		},
+		flows:       map[string]*models.RecordedFlow{},
+		updated:     map[string]time.Time{},
+		updateErrBy: map[string]error{"update-fail": fmt.Errorf("update failed")},
+	}
+	sub := &mockSubmitter{errByID: map[string]error{"submit-fail": fmt.Errorf("submit failed")}}
+
+	var logs []string
+	s := New(db, sub, time.Hour)
+	s.logf = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+
+	s.tick(context.Background())
+
+	if len(logs) != 3 {
+		t.Fatalf("expected 3 scheduler log entries, got %d: %v", len(logs), logs)
+	}
+	if logs[0] != "scheduler: parse cron for schedule bad-cron: parse cron: expected 5 fields, got 1" {
+		t.Fatalf("unexpected parse log: %q", logs[0])
+	}
+	if logs[1] != "scheduler: submit schedule submit-fail: submit failed" {
+		t.Fatalf("unexpected submit log: %q", logs[1])
+	}
+	if logs[2] != "scheduler: update schedule update-fail run: update failed" {
+		t.Fatalf("unexpected update log: %q", logs[2])
+	}
+}
+
+func TestSchedulerTickLogsListFailure(t *testing.T) {
+	db := &mockScheduleDB{listErr: fmt.Errorf("list failed")}
+	sub := &mockSubmitter{}
+
+	var logs []string
+	s := New(db, sub, time.Hour)
+	s.logf = func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+
+	s.tick(context.Background())
+
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 scheduler log entry, got %d: %v", len(logs), logs)
+	}
+	if logs[0] != "scheduler: list due schedules: list failed" {
+		t.Fatalf("unexpected list log: %q", logs[0])
+	}
 }

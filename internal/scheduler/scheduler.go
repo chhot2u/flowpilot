@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ type Scheduler struct {
 	stopCh    chan struct{}
 	mu        sync.Mutex
 	running   bool
+	logf      func(format string, args ...any)
 }
 
 func New(db ScheduleDB, submitter TaskSubmitter, interval time.Duration) *Scheduler {
@@ -36,6 +38,13 @@ func New(db ScheduleDB, submitter TaskSubmitter, interval time.Duration) *Schedu
 		submitter: submitter,
 		interval:  interval,
 		stopCh:    make(chan struct{}),
+		logf:      log.Printf,
+	}
+}
+
+func (s *Scheduler) logError(format string, args ...any) {
+	if s.logf != nil {
+		s.logf(format, args...)
 	}
 }
 
@@ -83,21 +92,26 @@ func (s *Scheduler) tick(ctx context.Context) {
 	now := time.Now()
 	due, err := s.db.ListDueSchedules(ctx, now)
 	if err != nil {
+		s.logError("scheduler: list due schedules: %v", err)
 		return
 	}
 
 	for _, sched := range due {
 		cronSched, err := ParseCron(sched.CronExpr)
 		if err != nil {
+			s.logError("scheduler: parse cron for schedule %s: %v", sched.ID, err)
 			continue
 		}
 
 		if submitErr := s.submitter.SubmitScheduledTask(ctx, sched); submitErr != nil {
+			s.logError("scheduler: submit schedule %s: %v", sched.ID, submitErr)
 			continue
 		}
 
 		nextRun := cronSched.Next(now)
-		_ = s.db.UpdateScheduleRun(ctx, sched.ID, now, nextRun)
+		if err := s.db.UpdateScheduleRun(ctx, sched.ID, now, nextRun); err != nil {
+			s.logError("scheduler: update schedule %s run: %v", sched.ID, err)
+		}
 	}
 }
 

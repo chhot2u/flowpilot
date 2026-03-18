@@ -28,6 +28,8 @@
   let auditEvents: TaskLifecycleEvent[] = [];
   let auditLoading = false;
   let hydratingTaskId: string | null = null;
+  let auditRequestSeq = 0;
+  let lastAuditTaskId: string | null = null;
 
   const actions = ['navigate', 'click', 'type', 'wait', 'screenshot', 'extract', 'scroll', 'select'];
 
@@ -133,16 +135,24 @@
     return `${(ms / 1000).toFixed(1)}s`;
   }
 
-  async function loadAudit() {
-    if (!$selectedTask) return;
+  async function loadAudit(taskID: string) {
+    const requestSeq = ++auditRequestSeq;
     auditLoading = true;
     try {
-      const events = await ListTaskEvents($selectedTask.id);
+      const events = await ListTaskEvents(taskID);
+      if (requestSeq !== auditRequestSeq || $selectedTask?.id !== taskID) {
+        return;
+      }
       auditEvents = (events || []) as TaskLifecycleEvent[];
     } catch (_) {
+      if (requestSeq !== auditRequestSeq || $selectedTask?.id !== taskID) {
+        return;
+      }
       auditEvents = [];
     } finally {
-      auditLoading = false;
+      if (requestSeq === auditRequestSeq && (!$selectedTask || $selectedTask.id === taskID)) {
+        auditLoading = false;
+      }
     }
   }
 
@@ -161,13 +171,19 @@
   }
 
   $: if ($selectedTask) {
-    loadAudit();
+    if (lastAuditTaskId !== $selectedTask.id) {
+      lastAuditTaskId = $selectedTask.id;
+      loadAudit($selectedTask.id);
+    }
     if (($selectedTask.steps?.length ?? 0) === 0 && hydratingTaskId !== $selectedTask.id) {
       hydrateSelectedTask($selectedTask as Task);
     }
   } else {
+    auditRequestSeq++;
     auditEvents = [];
+    auditLoading = false;
     hydratingTaskId = null;
+    lastAuditTaskId = null;
   }
 </script>
 

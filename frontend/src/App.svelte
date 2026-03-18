@@ -53,11 +53,14 @@
   let totalItems = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingTaskRefresh = false;
+  let refreshRequestSeq = 0;
+  let unsubscribeTaskEvents: (() => void) | null = null;
 
   $: activeTabMeta = tabs.find((tab) => tab.id === $activeTab) ?? tabs[0];
 
   async function refreshTasks() {
     pendingTaskRefresh = false;
+    const requestSeq = ++refreshRequestSeq;
     loading = true;
     try {
       loadError = '';
@@ -67,13 +70,21 @@
         $statusFilter === 'all' ? 'all' : $statusFilter,
         $tagFilter,
       );
+      if (requestSeq !== refreshRequestSeq) {
+        return;
+      }
       tasks.set((result.tasks || []) as Task[]);
       totalPages = result.totalPages || 1;
       totalItems = result.total || 0;
     } catch (err: any) {
+      if (requestSeq !== refreshRequestSeq) {
+        return;
+      }
       loadError = `Failed to load tasks: ${err?.message || err}`;
     } finally {
-      loading = false;
+      if (requestSeq === refreshRequestSeq) {
+        loading = false;
+      }
     }
   }
 
@@ -130,7 +141,7 @@
       isRecording.set(recording);
     } catch (_) {}
 
-    EventsOn('task:event', async (event: any) => {
+    unsubscribeTaskEvents = EventsOn('task:event', async (event: any) => {
       updateTaskInStore(event);
       if (['completed', 'failed', 'cancelled'].includes(event.status)) {
         try {
@@ -148,7 +159,12 @@
       clearTimeout(refreshTimer);
       refreshTimer = null;
     }
-    EventsOff('task:event');
+    if (unsubscribeTaskEvents) {
+      unsubscribeTaskEvents();
+      unsubscribeTaskEvents = null;
+    } else {
+      EventsOff('task:event');
+    }
   });
 </script>
 

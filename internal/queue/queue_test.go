@@ -397,7 +397,7 @@ func TestHandleSuccessPath(t *testing.T) {
 		Duration: 1000000000,
 	}
 
-	q.handleSuccess(task, result)
+	q.handleSuccess(context.Background(), task, result)
 
 	got, err := db.GetTask(context.Background(), task.ID)
 	if err != nil {
@@ -1060,7 +1060,7 @@ func TestMetricsTotalCompletedAfterHandleSuccess(t *testing.T) {
 		TaskID:  task.ID,
 		Success: true,
 	}
-	q.handleSuccess(task, result)
+	q.handleSuccess(context.Background(), task, result)
 
 	m := q.Metrics()
 	if m.TotalCompleted != 1 {
