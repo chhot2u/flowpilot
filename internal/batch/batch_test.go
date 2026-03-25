@@ -349,7 +349,7 @@ func TestCreateBatchFromFlow_ValidationRejectsEmptyURLs(t *testing.T) {
 // --- Template and Naming Tests ---
 
 func TestDefaultNameTemplate(t *testing.T) {
-	tmpl := DefaultNameTemplate()
+	tmpl := defaultNameTemplate()
 	if tmpl == "" {
 		t.Fatal("DefaultNameTemplate should not be empty")
 	}
@@ -378,7 +378,7 @@ func TestValidateTemplate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ValidateTemplate(tc.template)
+			got := validateTemplate(tc.template)
 			if got != tc.valid {
 				t.Errorf("ValidateTemplate(%q): got %v, want %v", tc.template, got, tc.valid)
 			}
@@ -387,7 +387,7 @@ func TestValidateTemplate(t *testing.T) {
 }
 
 func TestApplyTemplate(t *testing.T) {
-	vars := TemplateVars{
+	vars := templateVars{
 		URL:    "https://example.com",
 		Domain: "example.com",
 		Index:  3,
@@ -409,7 +409,7 @@ func TestApplyTemplate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ApplyTemplate(tc.template, vars)
+			got := applyTemplate(tc.template, vars)
 			if got != tc.want {
 				t.Errorf("ApplyTemplate(%q): got %q, want %q", tc.template, got, tc.want)
 			}
@@ -433,7 +433,7 @@ func TestExtractDomain(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractDomain(tc.url)
+			got := extractDomain(tc.url)
 			if got != tc.want {
 				t.Errorf("ExtractDomain(%q): got %q, want %q", tc.url, got, tc.want)
 			}
@@ -572,7 +572,7 @@ func TestBatchHeadlessHelper(t *testing.T) {
 
 func TestExtractDomainParseError(t *testing.T) {
 	// url.Parse returns error for URLs with invalid percent-encoding
-	got := ExtractDomain("https://example.com/%zz")
+	got := extractDomain("https://example.com/%zz")
 	if got != "" {
 		t.Errorf("expected empty for invalid URL, got %q", got)
 	}

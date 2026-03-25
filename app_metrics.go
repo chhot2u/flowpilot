@@ -11,7 +11,7 @@ import (
 
 func (a *App) GetPrometheusMetrics() string {
 	queueMetrics := a.GetQueueMetrics()
-	taskMetrics := a.GetTaskMetrics()
+	taskMetrics := a.getTaskMetrics()
 	proxyMetrics := a.getProxyMetrics()
 	sharedPoolMetrics := a.getSharedPoolMetrics()
 	proxyPoolMetrics := a.getProxyPoolMetrics()

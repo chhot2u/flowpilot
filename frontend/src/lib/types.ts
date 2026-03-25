@@ -133,14 +133,6 @@ export interface Task {
   loggingPolicy?: TaskLoggingPolicy;
 }
 
-export interface PaginatedTasks {
-  tasks: Task[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}
-
 export interface Proxy {
   id: string;
   server: string;
@@ -212,16 +204,6 @@ export interface TaskEvent {
   status: TaskStatus;
   error?: string;
   log?: LogEntry;
-}
-
-export interface DOMSnapshot {
-  id: string;
-  flowId: string;
-  stepIndex: number;
-  html: string;
-  screenshotPath: string;
-  url: string;
-  capturedAt: string;
 }
 
 export interface TaskLifecycleEvent {
@@ -314,8 +296,3 @@ export interface VisualDiff {
   createdAt: string;
 }
 
-export interface DiffRequest {
-  baselineId: string;
-  taskId: string;
-  threshold: number;
-}

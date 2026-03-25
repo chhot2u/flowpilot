@@ -10,8 +10,6 @@ if (!target) {
 document.documentElement.dataset.app = 'flowpilot'
 document.body.dataset.theme = 'dark'
 
-const app = new App({
+new App({
   target,
 })
-
-export default app

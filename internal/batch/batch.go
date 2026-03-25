@@ -33,9 +33,9 @@ func (e *Engine) CreateBatchFromFlow(ctx context.Context, flow models.RecordedFl
 	batchID := uuid.New().String()
 	nameTemplate := input.NamingTemplate
 	if strings.TrimSpace(nameTemplate) == "" {
-		nameTemplate = DefaultNameTemplate()
+		nameTemplate = defaultNameTemplate()
 	}
-	if !ValidateTemplate(nameTemplate) {
+	if !validateTemplate(nameTemplate) {
 		return models.BatchGroup{}, nil, fmt.Errorf("invalid naming template")
 	}
 
@@ -48,12 +48,12 @@ func (e *Engine) CreateBatchFromFlow(ctx context.Context, flow models.RecordedFl
 	created := make([]models.Task, 0, len(input.URLs))
 	for i, rawURL := range input.URLs {
 		index := i + 1
-		vars := TemplateVars{
+		vars := templateVars{
 			URL:    rawURL,
-			Domain: ExtractDomain(rawURL),
+			Domain: extractDomain(rawURL),
 			Index:  index,
 		}
-		name := ApplyTemplate(nameTemplate, vars)
+		name := applyTemplate(nameTemplate, vars)
 		vars.Name = name
 
 		proxyConfig := input.Proxy
@@ -70,8 +70,8 @@ func (e *Engine) CreateBatchFromFlow(ctx context.Context, flow models.RecordedFl
 		adjustedSteps := make([]models.TaskStep, len(steps))
 		for sIdx, step := range steps {
 			stepCopy := step
-			stepCopy.Value = ApplyTemplate(stepCopy.Value, vars)
-			stepCopy.Selector = ApplyTemplate(stepCopy.Selector, vars)
+			stepCopy.Value = applyTemplate(stepCopy.Value, vars)
+			stepCopy.Selector = applyTemplate(stepCopy.Selector, vars)
 			adjustedSteps[sIdx] = stepCopy
 		}
 

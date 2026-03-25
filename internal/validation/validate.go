@@ -189,8 +189,8 @@ func ValidateTaskSteps(steps []models.TaskStep, allowEval bool) error {
 	return nil
 }
 
-// ValidateProxyServer checks that the server is in valid host:port format.
-func ValidateProxyServer(server string) error {
+// validateProxyServer checks that the server is in valid host:port format.
+func validateProxyServer(server string) error {
 	if strings.TrimSpace(server) == "" {
 		return ErrEmptyServer
 	}
@@ -212,8 +212,8 @@ func ValidatePriority(priority models.TaskPriority) error {
 	return nil
 }
 
-// ValidateProxyProtocol checks that the protocol is http, https, or socks5.
-func ValidateProxyProtocol(protocol models.ProxyProtocol) error {
+// validateProxyProtocol checks that the protocol is http, https, or socks5.
+func validateProxyProtocol(protocol models.ProxyProtocol) error {
 	if !validProtocols[protocol] {
 		return ErrInvalidProtocol
 	}
@@ -283,17 +283,17 @@ func ValidateTask(name, rawURL string, steps []models.TaskStep, priority models.
 
 // ValidateProxy validates proxy server and protocol for creation.
 func ValidateProxy(server string, protocol models.ProxyProtocol) error {
-	if err := ValidateProxyServer(server); err != nil {
+	if err := validateProxyServer(server); err != nil {
 		return fmt.Errorf("validate proxy: %w", err)
 	}
-	if err := ValidateProxyProtocol(protocol); err != nil {
+	if err := validateProxyProtocol(protocol); err != nil {
 		return fmt.Errorf("validate proxy: %w", err)
 	}
 	return nil
 }
 
-// ValidateProxyFallback checks that the optional auto-routing fallback mode is supported.
-func ValidateProxyFallback(fallback models.ProxyRoutingFallback) error {
+// validateProxyFallback checks that the optional auto-routing fallback mode is supported.
+func validateProxyFallback(fallback models.ProxyRoutingFallback) error {
 	if fallback == "" {
 		return nil
 	}
@@ -310,11 +310,11 @@ func ValidateProxyConfig(cfg models.ProxyConfig) error {
 	hasServerDependentFields := cfg.Protocol != "" || strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != ""
 
 	if hasServer {
-		if err := ValidateProxyServer(cfg.Server); err != nil {
+		if err := validateProxyServer(cfg.Server); err != nil {
 			return fmt.Errorf("validate proxy config: %w", err)
 		}
 		if cfg.Protocol != "" {
-			if err := ValidateProxyProtocol(cfg.Protocol); err != nil {
+			if err := validateProxyProtocol(cfg.Protocol); err != nil {
 				return fmt.Errorf("validate proxy config: %w", err)
 			}
 		}
@@ -322,7 +322,7 @@ func ValidateProxyConfig(cfg models.ProxyConfig) error {
 		return fmt.Errorf("validate proxy config: %w", ErrEmptyServer)
 	}
 
-	if err := ValidateProxyFallback(cfg.Fallback); err != nil {
+	if err := validateProxyFallback(cfg.Fallback); err != nil {
 		return fmt.Errorf("validate proxy config: %w", err)
 	}
 	return nil

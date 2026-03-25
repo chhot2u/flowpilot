@@ -60,7 +60,7 @@ func (a *App) stopMetricsServer(ctx context.Context) {
 	}
 }
 
-func (a *App) MetricsAddress() string {
+func (a *App) metricsAddress() string {
 	a.metricsMu.Lock()
 	defer a.metricsMu.Unlock()
 	if a.metricsListener == nil {

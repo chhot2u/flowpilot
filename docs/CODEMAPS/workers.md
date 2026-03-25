@@ -107,13 +107,13 @@
 - `ParseCSVURLs(reader) ([]string, error)` — Extracts URLs from first CSV column
 
 **variables.go:**
-- `TemplateVars` struct — URL, Domain, Index, Name
-- `ApplyTemplate(template, vars) string` — Replaces `{{url}}`, `{{domain}}`, `{{index}}`, `{{name}}`
-- `ExtractDomain(rawURL) string` — URL hostname extraction
+- `templateVars` struct — Package-private substitutions for URL, Domain, Index, Name
+- `applyTemplate(template, vars) string` — Replaces `{{url}}`, `{{domain}}`, `{{index}}`, `{{name}}`
+- `extractDomain(rawURL) string` — URL hostname extraction
 
 **naming.go:**
-- `DefaultNameTemplate() string` — Returns `"Task {{index}} - {{domain}}"`
-- `ValidateTemplate(template) bool` — Delegates to `models.ValidateBatchTemplate()`
+- `defaultNameTemplate() string` — Returns `"Task {{index}} - {{domain}}"`
+- `validateTemplate(template) bool` — Delegates to `models.ValidateBatchTemplate()`
 
 ### Dependencies
 - `flowpilot/internal/database` (BeginTx, CreateTaskTx, CreateBatchGroupTx)

@@ -14,7 +14,7 @@ func TestMetricsServerServesPrometheusMetrics(t *testing.T) {
 	app.startMetricsServer(t.Context())
 	defer app.stopMetricsServer(t.Context())
 
-	addr := app.MetricsAddress()
+	addr := app.metricsAddress()
 	if addr == "" {
 		t.Fatal("expected metrics address")
 	}

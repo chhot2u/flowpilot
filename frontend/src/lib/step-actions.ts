@@ -16,9 +16,7 @@ export const supportedStepActions = [
 
 import { get, writable } from 'svelte/store';
 
-export type SupportedStepAction = typeof supportedStepActions[number];
-
-export interface StepActionState {
+interface StepActionState {
   actions: string[];
   usingFallback: boolean;
   warning: string;
@@ -64,15 +62,6 @@ function createFallbackState(): StepActionState {
     warning: fallbackWarning,
     loaded: true,
   };
-}
-
-export async function loadSupportedStepActions(): Promise<string[]> {
-  const app = getWailsApp();
-  const actions = normalizeActions(await app?.GetSupportedStepActions?.());
-  if (actions.length === 0) {
-    return [...supportedStepActions];
-  }
-  return actions;
 }
 
 async function resolveStepActionState(): Promise<StepActionState> {

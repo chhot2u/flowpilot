@@ -25,7 +25,6 @@ import (
 	"flowpilot/internal/scheduler"
 
 	"github.com/chromedp/chromedp"
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type AppConfig struct {
@@ -105,15 +104,45 @@ func (a *App) ready() error {
 	return nil
 }
 
+func (a *App) loadConfigFromDisk() error {
+	a.configMu.Lock()
+	configPath := a.configPath
+	cfg := a.config
+	a.configMu.Unlock()
+	if configPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			cfg.MetricsAddr = normalizeMetricsAddr(cfg.MetricsAddr)
+			a.configMu.Lock()
+			a.config = cfg
+			a.configMu.Unlock()
+			return nil
+		}
+		return fmt.Errorf("read config file: %w", err)
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse config file: %w", err)
+	}
+	cfg.MetricsAddr = normalizeMetricsAddr(cfg.MetricsAddr)
+	if cfg.LogSlogLevel == "" {
+		cfg.LogSlogLevel = DefaultAppConfig().LogSlogLevel
+	}
+	a.configMu.Lock()
+	a.config = cfg
+	a.configMu.Unlock()
+	return nil
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	wailsRuntimeLoggingEnabled.Store(true)
-	logs.Init(a.config.LogSlogLevel)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
 		a.initErr = fmt.Errorf("get home directory: %w", err)
-		wailsRuntime.LogErrorf(ctx, "startup failed: %v", a.initErr)
+		logErrorf(ctx, "startup failed: %v", a.initErr)
 		return
 	}
 	a.dataDir = filepath.Join(home, ".flowpilot")
@@ -124,8 +153,18 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.configMu.Lock()
-	a.config.MetricsAddr = normalizeMetricsAddr(a.config.MetricsAddr)
+	a.configPath = filepath.Join(a.dataDir, "config.json")
 	a.configMu.Unlock()
+	if err := a.loadConfigFromDisk(); err != nil {
+		a.initErr = fmt.Errorf("load config: %w", err)
+		logErrorf(ctx, "startup failed: %v", a.initErr)
+		return
+	}
+	wailsRuntimeLoggingEnabled.Store(true)
+	a.configMu.Lock()
+	logLevel := a.config.LogSlogLevel
+	a.configMu.Unlock()
+	logs.Init(logLevel)
 
 	if err := crypto.InitKey(a.dataDir); err != nil {
 		a.initErr = fmt.Errorf("init encryption: %w", err)
@@ -186,7 +225,7 @@ func (a *App) startup(ctx context.Context) {
 	go a.proxyManager.StartHealthChecks(ctx)
 
 	a.queue = queue.New(db, runner, a.config.QueueConcurrency, func(event models.TaskEvent) {
-		wailsRuntime.EventsEmit(ctx, "task:event", event)
+		safeWailsEmit(ctx, "task:event", event)
 	})
 	a.queue.SetProxyManager(a.proxyManager)
 	a.queue.SetProxyConcurrencyLimit(a.config.ProxyConcurrency)
@@ -214,13 +253,14 @@ func (a *App) startup(ctx context.Context) {
 
 	go a.runRetentionCleanup(ctx)
 
-	// Set up config file path for hot-reload watching.
 	a.configMu.Lock()
-	a.configPath = filepath.Join(a.dataDir, "config.json")
 	if info, err := os.Stat(a.configPath); err == nil {
 		a.configModTime = info.ModTime()
+	} else {
+		a.configModTime = time.Time{}
 	}
 	a.configMu.Unlock()
+	go a.watchConfig(ctx)
 
 	logInfof(ctx, "Application started successfully")
 }
@@ -255,11 +295,11 @@ func (a *App) purgeOnce() {
 	}
 }
 
-// WatchConfig polls the config file every 30 seconds for changes (by mtime).
+// watchConfig polls the config file every 30 seconds for changes (by mtime).
 // If the file has been modified, it reloads hot-reloadable settings:
 // ProxyConcurrency, HealthCheckInterval, and HealthCheckURL are applied live.
 // QueueConcurrency and BrowserPoolSize changes are logged as requiring a restart.
-func (a *App) WatchConfig(ctx context.Context) {
+func (a *App) watchConfig(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -392,8 +432,8 @@ func (a *App) shutdown(ctx context.Context) {
 	a.cleanup()
 }
 
-// GetTaskMetrics returns the latest in-memory task metrics snapshot.
-func (a *App) GetTaskMetrics() models.TaskMetrics {
+// getTaskMetrics returns the latest in-memory task metrics snapshot.
+func (a *App) getTaskMetrics() models.TaskMetrics {
 	if a.queue == nil {
 		return models.TaskMetrics{}
 	}

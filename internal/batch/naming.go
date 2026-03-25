@@ -2,12 +2,12 @@ package batch
 
 import "flowpilot/internal/models"
 
-// DefaultNameTemplate returns the fallback naming template for batch tasks.
-func DefaultNameTemplate() string {
+// defaultNameTemplate returns the fallback naming template for batch tasks.
+func defaultNameTemplate() string {
 	return "Task {{index}} - {{domain}}"
 }
 
-// ValidateTemplate checks that only supported variables are used.
-func ValidateTemplate(template string) bool {
+// validateTemplate checks that only supported variables are used.
+func validateTemplate(template string) bool {
 	return models.ValidateBatchTemplate(template)
 }

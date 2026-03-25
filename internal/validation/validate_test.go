@@ -234,7 +234,7 @@ func TestValidateProxyServer(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateProxyServer(tc.input)
+			err := validateProxyServer(tc.input)
 			if tc.wantErr == nil && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -289,7 +289,7 @@ func TestValidateProxyProtocol(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateProxyProtocol(tc.input)
+			err := validateProxyProtocol(tc.input)
 			if tc.wantErr == nil && err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}

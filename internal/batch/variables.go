@@ -6,16 +6,16 @@ import (
 	"strings"
 )
 
-// TemplateVars holds substitutions for batch variables.
-type TemplateVars struct {
+// templateVars holds substitutions for batch variables.
+type templateVars struct {
 	URL    string
 	Domain string
 	Index  int
 	Name   string
 }
 
-// ApplyTemplate replaces supported variables in a template string.
-func ApplyTemplate(template string, vars TemplateVars) string {
+// applyTemplate replaces supported variables in a template string.
+func applyTemplate(template string, vars templateVars) string {
 	replacements := map[string]string{
 		"{{url}}":    vars.URL,
 		"{{domain}}": vars.Domain,
@@ -29,8 +29,8 @@ func ApplyTemplate(template string, vars TemplateVars) string {
 	return result
 }
 
-// ExtractDomain extracts the domain from a URL.
-func ExtractDomain(rawURL string) string {
+// extractDomain extracts the domain from a URL.
+func extractDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return ""
