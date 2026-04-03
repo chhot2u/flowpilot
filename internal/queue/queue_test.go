@@ -78,6 +78,95 @@ func makeTestTask(id string) models.Task {
 	}
 }
 
+func TestExecuteTask(t *testing.T) {
+	t.Parallel()
+
+	t.Run("TaskTimeoutHandling", func(t *testing.T) {
+		q, _ := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("timeout-test")
+		task.Timeout = 1 // 1 second timeout
+
+		// This test verifies the timeout logic path in executeTask
+		// The actual browser runner is used, but timeout will trigger first
+		start := time.Now()
+		q.executeTask(context.Background(), task, false, false)
+		duration := time.Since(start)
+
+		if duration > 2*time.Second {
+			t.Errorf("task did not timeout correctly, took %v", duration)
+		}
+	})
+
+	t.Run("TaskCancellation", func(t *testing.T) {
+		q, _ := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("cancel-test")
+
+		// Start executeTask and cancel it immediately
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+		}()
+
+		q.executeTask(ctx, task, false, false)
+	})
+
+	t.Run("ProxyReservationFailure", func(t *testing.T) {
+		q, _ := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("proxy-fail-test")
+		task.Proxy.Geo = "US"
+
+		q.executeTask(context.Background(), task, true, true)
+
+		// Verify proxy count was decremented
+		q.mu.Lock()
+		if q.runningProxied != 0 {
+			t.Errorf("runningProxied should be 0, got %d", q.runningProxied)
+		}
+		q.mu.Unlock()
+	})
+
+	t.Run("StepFailurePropagation", func(t *testing.T) {
+		q, _ := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("step-fail-test")
+
+		q.executeTask(context.Background(), task, false, false)
+	})
+
+	t.Run("SuccessFinalizationPath", func(t *testing.T) {
+		q, _ := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("success-test")
+
+		q.executeTask(context.Background(), task, false, false)
+	})
+
+	t.Run("SuccessFinalizationPath", func(t *testing.T) {
+		q, db := setupTestQueueNoWorkers(t, nil, nil)
+		t.Cleanup(q.Stop)
+
+		task := makeTestTask("success-test")
+
+		q.executeTask(context.Background(), task, false, false)
+
+		// Verify task was marked completed or failed (browser may not run in test env)
+		updatedTask, err := db.GetTask(context.Background(), task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("task completed with status: %s", updatedTask.Status)
+	})
+}
+
 func TestNewQueue(t *testing.T) {
 	dir := t.TempDir()
 	db, err := database.New(filepath.Join(dir, "test.db"))

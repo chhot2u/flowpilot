@@ -250,6 +250,16 @@ func (r *Runner) RunTask(ctx context.Context, task models.Task) (*models.TaskRes
 		LogLimit:      policy.maxExecutionLogs,
 	}
 
+	// Recover from chromedp double close panic known upstream bug
+	defer func() {
+		if p := recover(); p != nil {
+			err, ok := p.(error)
+			if ok && strings.Contains(err.Error(), "close of closed channel") {
+				r.addLog(result, "warn", "chromedp upstream panic recovered: close of closed channel")
+			}
+		}
+	}()
+
 	var browserCtx context.Context
 	var browserCancel context.CancelFunc
 	var poolRelease func()
