@@ -831,3 +831,212 @@ func TestNewManagerCustomConfig(t *testing.T) {
 		t.Errorf("MaxFailures: got %d, want 10", m.config.MaxFailures)
 	}
 }
+
+func TestHasAvailableProxyWithAvailableProxy(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+	addHealthyProxy(t, db, "p1", "proxy1:8080", "US", 10, 5)
+
+	ok, wait, err := m.HasAvailableProxy("US", models.ProxyFallbackStrict)
+	if !ok || wait != 0 || err != nil {
+		t.Fatalf("expected true,0,nil; got %v,%v,%v", ok, wait, err)
+	}
+}
+
+func TestHasAvailableProxyNoProxies(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	ok, _, err := m.HasAvailableProxy("US", models.ProxyFallbackStrict)
+	if ok || err == nil {
+		t.Fatalf("expected false,err; got %v,%v", ok, err)
+	}
+}
+
+func TestHasAvailableProxyWithDirectFallback(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	ok, wait, err := m.HasAvailableProxy("NONEXISTENT", models.ProxyFallbackDirect)
+	if !ok || wait != 0 || err != nil {
+		t.Fatalf("expected true,0,nil for direct fallback; got %v,%v,%v", ok, wait, err)
+	}
+}
+
+func TestNormalizeCountry(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", "UNSPECIFIED"},
+		{"  ", "UNSPECIFIED"},
+		{"us", "US"},
+		{"US", "US"},
+		{"Uk", "UK"},
+	}
+	for _, tt := range tests {
+		result := normalizeCountry(tt.input)
+		if result != tt.expected {
+			t.Fatalf("normalizeCountry(%q): expected %q, got %q", tt.input, tt.expected, result)
+		}
+	}
+}
+
+func TestRecordFallback(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	m.recordFallback("US")
+	m.recordFallback("US")
+	m.recordFallback("UK")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.countryFallbackCount["US"] != 2 {
+		t.Fatalf("expected fallback count 2 for US, got %d", m.countryFallbackCount["US"])
+	}
+	if m.countryFallbackCount["UK"] != 1 {
+		t.Fatalf("expected fallback count 1 for UK, got %d", m.countryFallbackCount["UK"])
+	}
+}
+
+func TestUpdateHealthCheckConfig(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	m.UpdateHealthCheckConfig(600, "http://new.example.com")
+	if m.config.HealthCheckInterval != 600 {
+		t.Fatalf("expected interval 600, got %d", m.config.HealthCheckInterval)
+	}
+	if m.config.HealthCheckURL != "http://new.example.com" {
+		t.Fatalf("expected new URL, got %s", m.config.HealthCheckURL)
+	}
+}
+
+func TestUpdateHealthCheckConfigIgnoresZero(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+	original := m.config.HealthCheckInterval
+
+	m.UpdateHealthCheckConfig(0, "")
+	if m.config.HealthCheckInterval != original {
+		t.Fatalf("expected interval unchanged, got %d", m.config.HealthCheckInterval)
+	}
+}
+
+func TestCountryStats(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	p1 := models.Proxy{ID: "p1", Server: "proxy1:8080", Status: models.ProxyStatusHealthy, Geo: "US", TotalUsed: 100}
+	p2 := models.Proxy{ID: "p2", Server: "proxy2:8080", Status: models.ProxyStatusHealthy, Geo: "US", TotalUsed: 50}
+	p3 := models.Proxy{ID: "p3", Server: "proxy3:8080", Status: models.ProxyStatusHealthy, Geo: "UK", TotalUsed: 75}
+	proxies := []models.Proxy{p1, p2, p3}
+
+	stats := m.CountryStats(proxies, nil)
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 countries, got %d", len(stats))
+	}
+
+	for _, s := range stats {
+		if s.Country == "US" {
+			if s.Total != 2 || s.Healthy != 2 || s.TotalUsed != 150 {
+				t.Fatalf("US stats wrong: total=%d, healthy=%d, used=%d", s.Total, s.Healthy, s.TotalUsed)
+			}
+		} else if s.Country == "UK" {
+			if s.Total != 1 || s.Healthy != 1 || s.TotalUsed != 75 {
+				t.Fatalf("UK stats wrong: total=%d, healthy=%d, used=%d", s.Total, s.Healthy, s.TotalUsed)
+			}
+		}
+	}
+}
+
+func TestCountryStatsWithActiveLocalEndpoints(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	p1 := models.Proxy{ID: "p1", Server: "proxy1:8080", Status: models.ProxyStatusHealthy, Geo: "US"}
+	proxies := []models.Proxy{p1}
+	endpoints := map[string]int{"p1": 5}
+
+	stats := m.CountryStats(proxies, endpoints)
+	if stats[0].ActiveLocalEndpoints != 5 {
+		t.Fatalf("expected 5 active endpoints, got %d", stats[0].ActiveLocalEndpoints)
+	}
+}
+
+func TestActiveReservationsUnknownProxy(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	count := m.ActiveReservations("unknown_proxy")
+	if count != 0 {
+		t.Fatalf("expected 0 reservations for unknown proxy, got %d", count)
+	}
+}
+
+func TestRecordUsageValidProxy(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+	addHealthyProxy(t, db, "p1", "proxy1:8080", "US", 10, 5)
+
+	err := m.RecordUsage("p1", true)
+	if err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+}
+
+func TestCheckProxyWithAuthCredentials(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	p := models.Proxy{
+		ID:       "auth_proxy",
+		Server:   "localhost:8080",
+		Protocol: "http",
+		Username: "user",
+		Password: "pass",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m.checkProxy(ctx, p)
+}
+
+func TestHasAvailableProxyRateLimited(t *testing.T) {
+	m, db := setupTestManager(t, models.RotationRoundRobin)
+	defer db.Close()
+
+	p := models.Proxy{
+		ID:                    "p1",
+		Server:                "proxy1:8080",
+		Protocol:              "http",
+		Status:                models.ProxyStatusHealthy,
+		Geo:                   "US",
+		MaxRequestsPerMinute:  2,
+	}
+	ctx := context.Background()
+	if err := db.CreateProxy(ctx, p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+	if err := db.UpdateProxyHealth(ctx, "p1", models.ProxyStatusHealthy, 10); err != nil {
+		t.Fatalf("UpdateProxyHealth: %v", err)
+	}
+
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	m.mu.Lock()
+	m.requestTimes["p1"] = []time.Time{now, now}
+	m.mu.Unlock()
+
+	ok, wait, err := m.HasAvailableProxy("US", models.ProxyFallbackStrict)
+	if ok || wait == 0 {
+		t.Fatalf("expected rate limited (false, wait>0); got %v,%v,%v", ok, wait, err)
+	}
+}

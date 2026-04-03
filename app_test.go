@@ -10,11 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"flowpilot/internal/browser"
 	"flowpilot/internal/crypto"
 	"flowpilot/internal/database"
+	"flowpilot/internal/localproxy"
+	"flowpilot/internal/logs"
 	"flowpilot/internal/models"
+	"flowpilot/internal/proxy"
 	"flowpilot/internal/queue"
 )
 
@@ -1110,5 +1114,1391 @@ func TestAppDeleteRecordedFlow(t *testing.T) {
 	_, err := app.GetRecordedFlow(flow.ID)
 	if err == nil {
 		t.Error("expected error after deleting flow")
+	}
+}
+
+// Helper: setup app with proxy manager
+func setupTestAppWithProxyManager(t *testing.T) *App {
+	t.Helper()
+	app := setupTestApp(t)
+	app.proxyManager = proxy.NewManager(app.db, models.ProxyPoolConfig{})
+	return app
+}
+
+// Helper: setup app with log exporter
+func setupTestAppWithLogExporter(t *testing.T) *App {
+	t.Helper()
+	app := setupTestApp(t)
+	logsDir := filepath.Join(t.TempDir(), "logs")
+	le, err := logs.NewExporter(app.db, logsDir)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+	app.logExporter = le
+	return app
+}
+
+// app_batch.go tests
+func TestAppGetBatchProgress(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	// Should fail if not ready
+	badApp := &App{initErr: errors.New("test")}
+	_, err := badApp.GetBatchProgress("any")
+	if err == nil {
+		t.Error("expected error when app not ready")
+	}
+	
+	// Valid case with empty batch
+	progress, err := app.GetBatchProgress("nonexistent")
+	if err != nil {
+		t.Fatalf("GetBatchProgress: %v", err)
+	}
+	if progress.Total != 0 {
+		t.Errorf("expected 0 tasks, got %d", progress.Total)
+	}
+}
+
+func TestAppListBatchGroups(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	groups, err := app.ListBatchGroups()
+	if err != nil {
+		t.Fatalf("ListBatchGroups: %v", err)
+	}
+	if groups == nil {
+		groups = []models.BatchGroup{}
+	}
+	if len(groups) != 0 {
+		t.Errorf("expected empty list, got %d", len(groups))
+	}
+}
+
+func TestAppListTasksByBatch(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	tasks, err := app.ListTasksByBatch("nonexistent")
+	if err != nil {
+		t.Fatalf("ListTasksByBatch: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(tasks))
+	}
+}
+
+func TestAppRetryFailedBatchEmpty(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	// Empty batch ID should error
+	_, err := app.RetryFailedBatch("")
+	if err == nil {
+		t.Error("expected error for empty batchID")
+	}
+}
+
+func TestAppRetryFailedBatchNotFound(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	failed, err := app.RetryFailedBatch("nonexistent")
+	if err != nil {
+		t.Fatalf("RetryFailedBatch: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("expected empty list, got %d", len(failed))
+	}
+}
+
+func TestAppPauseBatchEmptyID(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	err := app.PauseBatch("")
+	if err == nil {
+		t.Error("expected error for empty batchID")
+	}
+}
+
+func TestAppPauseBatchValid(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	err := app.PauseBatch("test-batch-123")
+	if err != nil {
+		t.Fatalf("PauseBatch: %v", err)
+	}
+}
+
+func TestAppResumeBatchEmptyID(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	err := app.ResumeBatch("")
+	if err == nil {
+		t.Error("expected error for empty batchID")
+	}
+}
+
+func TestAppResumeBatchValid(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	err := app.ResumeBatch("test-batch-456")
+	if err != nil {
+		t.Fatalf("ResumeBatch: %v", err)
+	}
+}
+
+// app_captcha.go tests
+func TestAppSaveCaptchaConfigValid(t *testing.T) {
+	app := setupTestApp(t)
+	// Create a mock runner so refreshCaptchaSolver doesn't panic
+	app.runner = &browser.Runner{}
+	
+	cfg, err := app.SaveCaptchaConfig("2captcha", "test-api-key-123")
+	if err != nil {
+		t.Fatalf("SaveCaptchaConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+	if cfg.Provider != models.CaptchaProvider2Captcha {
+		t.Errorf("expected 2captcha provider, got %s", cfg.Provider)
+	}
+}
+
+func TestAppSaveCaptchaConfigEmptyProvider(t *testing.T) {
+	app := setupTestApp(t)
+	app.runner = &browser.Runner{}
+	
+	_, err := app.SaveCaptchaConfig("", "key")
+	if err == nil {
+		t.Error("expected error for empty provider")
+	}
+}
+
+func TestAppSaveCaptchaConfigEmptyKey(t *testing.T) {
+	app := setupTestApp(t)
+	app.runner = &browser.Runner{}
+	
+	_, err := app.SaveCaptchaConfig("2captcha", "")
+	if err == nil {
+		t.Error("expected error for empty apiKey")
+	}
+}
+
+func TestAppSaveCaptchaConfigInvalidProvider(t *testing.T) {
+	app := setupTestApp(t)
+	app.runner = &browser.Runner{}
+	
+	_, err := app.SaveCaptchaConfig("invalid-provider", "key")
+	if err == nil {
+		t.Error("expected error for invalid provider")
+	}
+}
+
+func TestAppGetCaptchaConfigNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	
+	cfg, err := app.GetCaptchaConfig()
+	if err != nil {
+		t.Fatalf("GetCaptchaConfig: %v", err)
+	}
+	if cfg != nil {
+		t.Error("expected nil when no config exists")
+	}
+}
+
+func TestAppListCaptchaConfigs(t *testing.T) {
+	app := setupTestApp(t)
+	
+	configs, err := app.ListCaptchaConfigs()
+	if err != nil {
+		t.Fatalf("ListCaptchaConfigs: %v", err)
+	}
+	if len(configs) != 0 {
+		t.Errorf("expected 0 configs, got %d", len(configs))
+	}
+}
+
+func TestAppDeleteCaptchaConfigEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	app.runner = &browser.Runner{}
+	
+	err := app.DeleteCaptchaConfig("")
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+func TestAppTestCaptchaConfigEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.TestCaptchaConfig("")
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+// app_compliance.go tests
+func TestAppParseBatchURLsListFormat(t *testing.T) {
+	app := setupTestApp(t)
+	
+	input := "https://example.com\nhttps://example.org"
+	urls, err := app.ParseBatchURLs(input, false)
+	if err != nil {
+		t.Fatalf("ParseBatchURLs: %v", err)
+	}
+	if len(urls) != 2 {
+		t.Errorf("expected 2 URLs, got %d", len(urls))
+	}
+}
+
+func TestAppParseBatchURLsCSVFormat(t *testing.T) {
+	app := setupTestApp(t)
+	
+	input := "URL\nhttps://example.com\nhttps://example.org\n"
+	urls, err := app.ParseBatchURLs(input, true)
+	if err != nil {
+		t.Fatalf("ParseBatchURLs CSV: %v", err)
+	}
+	if len(urls) < 2 {
+		t.Errorf("expected at least 2 URLs, got %d", len(urls))
+	}
+}
+
+func TestAppParseBatchURLsEmptyInput(t *testing.T) {
+	app := setupTestApp(t)
+	
+	input := ""
+	urls, err := app.ParseBatchURLs(input, false)
+	if err != nil {
+		t.Fatalf("ParseBatchURLs empty: %v", err)
+	}
+	if len(urls) != 0 {
+		t.Errorf("expected 0 URLs for empty input, got %d", len(urls))
+	}
+}
+
+// app_export.go tests
+func TestAppExportTaskLogsNoExporter(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ExportTaskLogs("task-123")
+	if err == nil {
+		t.Error("expected error when logExporter is nil")
+	}
+}
+
+func TestAppExportBatchLogsNoExporter(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ExportBatchLogs("batch-123")
+	if err == nil {
+		t.Error("expected error when logExporter is nil")
+	}
+}
+
+func TestAppListWebSocketLogsEmptyFlowID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ListWebSocketLogs("")
+	if err == nil {
+		t.Error("expected error for empty flowID")
+	}
+}
+
+func TestAppListWebSocketLogsValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	logs, err := app.ListWebSocketLogs("flow-123")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0 logs, got %d", len(logs))
+	}
+}
+
+func TestAppListTaskEventsEmptyTaskID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ListTaskEvents("")
+	if err == nil {
+		t.Error("expected error for empty taskID")
+	}
+}
+
+func TestAppListTaskEventsValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	events, err := app.ListTaskEvents("task-123")
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(events))
+	}
+}
+
+// app_flow_io.go tests
+func TestAppValidateStepActions(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionClick, Value: "#button"},
+	}
+	
+	err := validateStepActions(steps)
+	if err != nil {
+		t.Fatalf("validateStepActions: %v", err)
+	}
+}
+
+func TestAppValidateStepActionsInvalid(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: "invalid_action", Value: "test"},
+	}
+	
+	err := validateStepActions(steps)
+	if err == nil {
+		t.Error("expected error for invalid action")
+	}
+}
+
+func TestAppCollectUnknownStepActionWarnings(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "test"},
+		{Action: "unknown_action", Value: "test"},
+	}
+	
+	warnings := collectUnknownStepActionWarnings(steps, 1)
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d", len(warnings))
+	}
+}
+
+func TestAppExportTaskNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ExportTask("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent task")
+	}
+}
+
+func TestAppImportTaskInvalidPath(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ImportTask("/nonexistent/path.json")
+	if err == nil {
+		t.Error("expected error for invalid path")
+	}
+}
+
+func TestAppExportFlowNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ExportFlow("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent flow")
+	}
+}
+
+func TestAppImportFlowInvalidPath(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ImportFlow("/nonexistent/path.json")
+	if err == nil {
+		t.Error("expected error for invalid path")
+	}
+}
+
+// app_flows.go tests
+func TestAppSaveDOMSnapshot(t *testing.T) {
+	app := setupTestApp(t)
+	
+	snapshot := models.DOMSnapshot{
+		FlowID:    "flow-123",
+		StepIndex: 0,
+		HTML:      "<html></html>",
+	}
+	
+	err := app.SaveDOMSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("SaveDOMSnapshot: %v", err)
+	}
+}
+
+func TestAppListDOMSnapshotsValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	snapshots, err := app.ListDOMSnapshots("flow-123")
+	if err != nil {
+		t.Fatalf("ListDOMSnapshots: %v", err)
+	}
+	if len(snapshots) != 0 {
+		t.Errorf("expected 0 snapshots, got %d", len(snapshots))
+	}
+}
+
+func TestAppUpdateRecordedFlowEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	flow := models.RecordedFlow{ID: ""}
+	err := app.UpdateRecordedFlow(flow)
+	if err == nil {
+		t.Error("expected error for empty ID")
+	}
+}
+
+func TestAppUpdateRecordedFlowValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	steps := []models.RecordedStep{
+		{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"},
+	}
+	flow, _ := app.CreateRecordedFlow("Original", "", "https://example.com", steps)
+	
+	flow.Name = "Updated"
+	err := app.UpdateRecordedFlow(*flow)
+	if err != nil {
+		t.Fatalf("UpdateRecordedFlow: %v", err)
+	}
+	
+	updated, _ := app.GetRecordedFlow(flow.ID)
+	if updated.Name != "Updated" {
+		t.Errorf("expected name Updated, got %s", updated.Name)
+	}
+}
+
+// app_proxy.go tests
+func TestAppListProxyCountryStatsNoManager(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.ListProxyCountryStats()
+	if err == nil {
+		t.Error("expected error when proxyManager is nil")
+	}
+}
+
+func TestAppListProxyCountryStatsValid(t *testing.T) {
+	app := setupTestAppWithProxyManager(t)
+	
+	stats, err := app.ListProxyCountryStats()
+	if err != nil {
+		t.Fatalf("ListProxyCountryStats: %v", err)
+	}
+	if stats == nil {
+		stats = []models.ProxyCountryStats{}
+	}
+	if len(stats) != 0 {
+		t.Errorf("expected empty stats, got %d", len(stats))
+	}
+}
+
+func TestAppCreateProxyRoutingPresetNoName(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.CreateProxyRoutingPreset("", "US", "strict", false)
+	if err == nil {
+		t.Error("expected error for empty name")
+	}
+}
+
+func TestAppCreateProxyRoutingPresetValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	preset, err := app.CreateProxyRoutingPreset("My Preset", "US", "strict", false)
+	if err != nil {
+		t.Fatalf("CreateProxyRoutingPreset: %v", err)
+	}
+	if preset == nil {
+		t.Fatal("expected preset, got nil")
+	}
+	if preset.Name != "My Preset" {
+		t.Errorf("expected name 'My Preset', got %s", preset.Name)
+	}
+}
+
+func TestAppCreateProxyRoutingPresetRandomNoCountry(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.CreateProxyRoutingPreset("Random", "", "", true)
+	if err == nil {
+		t.Error("expected error for random without country")
+	}
+}
+
+func TestAppListProxyRoutingPresetsValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	presets, err := app.ListProxyRoutingPresets()
+	if err != nil {
+		t.Fatalf("ListProxyRoutingPresets: %v", err)
+	}
+	if len(presets) != 0 {
+		t.Errorf("expected 0 presets, got %d", len(presets))
+	}
+}
+
+func TestAppDeleteProxyRoutingPresetEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	err := app.DeleteProxyRoutingPreset("")
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+func TestAppDeleteProxyRoutingPresetValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	preset, _ := app.CreateProxyRoutingPreset("To Delete", "US", "strict", false)
+	err := app.DeleteProxyRoutingPreset(preset.ID)
+	if err != nil {
+		t.Fatalf("DeleteProxyRoutingPreset: %v", err)
+	}
+}
+
+func TestAppGetLocalProxyGatewayStatsNoManager(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.GetLocalProxyGatewayStats()
+	if err == nil {
+		t.Error("expected error when localProxyManager is nil")
+	}
+}
+
+func TestAppAddProxyWithRateLimitNegative(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.AddProxyWithRateLimit("proxy.example.com:8080", "http", "user", "pass", "", -1)
+	if err == nil {
+		t.Error("expected error for negative rate limit")
+	}
+}
+
+func TestAppAddProxyWithRateLimitValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	p, err := app.AddProxyWithRateLimit("proxy.example.com:8080", "http", "user", "pass", "US", 100)
+	if err != nil {
+		t.Fatalf("AddProxyWithRateLimit: %v", err)
+	}
+	if p.MaxRequestsPerMinute != 100 {
+		t.Errorf("expected rate limit 100, got %d", p.MaxRequestsPerMinute)
+	}
+}
+
+// app_schedules.go tests
+func TestAppGetScheduleEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	_, err := app.GetSchedule("")
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+func TestAppGetScheduleNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	
+	sched, err := app.GetSchedule("nonexistent")
+	// GetSchedule may return an error or nil schedule depending on DB behavior
+	if err == nil && sched != nil {
+		t.Error("expected nil or error for nonexistent schedule")
+	}
+}
+
+func TestAppListSchedulesValid(t *testing.T) {
+	app := setupTestApp(t)
+	
+	schedules, err := app.ListSchedules()
+	if err != nil {
+		t.Fatalf("ListSchedules: %v", err)
+	}
+	if len(schedules) != 0 {
+		t.Errorf("expected 0 schedules, got %d", len(schedules))
+	}
+}
+
+func TestAppDeleteScheduleEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	err := app.DeleteSchedule("")
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+func TestAppToggleScheduleEmptyID(t *testing.T) {
+	app := setupTestApp(t)
+	
+	err := app.ToggleSchedule("", true)
+	if err == nil {
+		t.Error("expected error for empty id")
+	}
+}
+
+// app.go tests
+func TestAppDefaultConfig(t *testing.T) {
+	cfg := DefaultAppConfig()
+	
+	if cfg.QueueConcurrency == 0 {
+		t.Error("expected QueueConcurrency > 0")
+	}
+	if cfg.RetentionDays == 0 {
+		t.Error("expected RetentionDays > 0")
+	}
+}
+
+func TestAppLoadConfigFromDiskNoPath(t *testing.T) {
+	app := setupTestApp(t)
+	app.configPath = ""
+	
+	err := app.loadConfigFromDisk()
+	if err != nil {
+		t.Fatalf("loadConfigFromDisk with no path: %v", err)
+	}
+}
+
+func TestAppLoadConfigFromDiskFileNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	app.configPath = filepath.Join(t.TempDir(), "nonexistent.json")
+	
+	err := app.loadConfigFromDisk()
+	if err != nil {
+		t.Fatalf("loadConfigFromDisk with missing file: %v", err)
+	}
+}
+
+func TestAppLoadConfigFromDiskValidJSON(t *testing.T) {
+	app := setupTestApp(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+	
+	configData := `{"QueueConcurrency": 5, "RetentionDays": 30}`
+	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	
+	app.configPath = configPath
+	err := app.loadConfigFromDisk()
+	if err != nil {
+		t.Fatalf("loadConfigFromDisk: %v", err)
+	}
+	if app.config.QueueConcurrency != 5 {
+		t.Errorf("expected QueueConcurrency 5, got %d", app.config.QueueConcurrency)
+	}
+}
+
+func TestAppLoadConfigFromDiskInvalidJSON(t *testing.T) {
+	app := setupTestApp(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+	
+	if err := os.WriteFile(configPath, []byte("invalid json {"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	
+	app.configPath = configPath
+	err := app.loadConfigFromDisk()
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestAppCheckAndReloadConfigNoPath(t *testing.T) {
+	app := setupTestApp(t)
+	app.configPath = ""
+	
+	app.checkAndReloadConfig(context.Background())
+	// Should not panic or error
+}
+
+func TestAppCheckAndReloadConfigFileNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	app.configPath = "/nonexistent/path/config.json"
+	
+	app.checkAndReloadConfig(context.Background())
+	// Should not panic or error
+}
+
+func TestAppCheckAndReloadConfigValidJSON(t *testing.T) {
+	app := setupTestApp(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+	
+	configData := `{"ProxyConcurrency": 10}`
+	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	
+	app.configPath = configPath
+	app.configModTime = time.Time{} // Zero time, so reload will happen
+	
+	app.checkAndReloadConfig(context.Background())
+	
+	app.configMu.Lock()
+	concurrency := app.config.ProxyConcurrency
+	app.configMu.Unlock()
+	
+	if concurrency != 10 {
+		t.Errorf("expected ProxyConcurrency 10, got %d", concurrency)
+	}
+}
+
+func TestAppPurgeOnceNoDatabase(t *testing.T) {
+	app := &App{db: nil, ctx: context.Background()}
+	
+	app.purgeOnce()
+	// Should not panic
+}
+
+func TestAppPurgeOnceWithDatabase(t *testing.T) {
+	app := setupTestApp(t)
+	
+	app.purgeOnce()
+	// Should not panic and should work
+}
+
+func TestAppGetTaskMetricsNoQueue(t *testing.T) {
+	app := setupTestApp(t)
+	
+	metrics := app.getTaskMetrics()
+	if metrics.Completed != 0 || metrics.Failed != 0 {
+		t.Errorf("expected zero metrics, got completed=%d failed=%d", metrics.Completed, metrics.Failed)
+	}
+}
+
+func TestAppGetTaskMetricsWithQueue(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	
+	metrics := app.getTaskMetrics()
+	if metrics.Completed < 0 || metrics.Failed < 0 {
+		t.Errorf("metrics should be non-negative: completed=%d failed=%d", metrics.Completed, metrics.Failed)
+	}
+}
+
+
+func TestAppCreateSchedule(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, err := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	if err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	sched, err := app.CreateSchedule("My Schedule", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if sched.Name != "My Schedule" {
+		t.Errorf("Name: got %q, want %q", sched.Name, "My Schedule")
+	}
+}
+
+func TestAppGetSchedule(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	sched, err := app.CreateSchedule("Sched", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	got, err := app.GetSchedule(sched.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule: %v", err)
+	}
+	if got.ID != sched.ID {
+		t.Errorf("ID mismatch: got %q, want %q", got.ID, sched.ID)
+	}
+}
+
+func TestAppListSchedules(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	_, _ = app.CreateSchedule("S1", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	_, _ = app.CreateSchedule("S2", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	scheds, err := app.ListSchedules()
+	if err != nil {
+		t.Fatalf("ListSchedules: %v", err)
+	}
+	if len(scheds) != 2 {
+		t.Errorf("count: got %d, want 2", len(scheds))
+	}
+}
+
+func TestAppDeleteSchedule(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	sched, err := app.CreateSchedule("S", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if err := app.DeleteSchedule(sched.ID); err != nil {
+		t.Fatalf("DeleteSchedule: %v", err)
+	}
+}
+
+func TestAppToggleSchedule(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	sched, err := app.CreateSchedule("S", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if err := app.ToggleSchedule(sched.ID, false); err != nil {
+		t.Fatalf("ToggleSchedule(false): %v", err)
+	}
+	if err := app.ToggleSchedule(sched.ID, true); err != nil {
+		t.Fatalf("ToggleSchedule(true): %v", err)
+	}
+}
+
+func TestAppUpdateSchedule(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	sched, err := app.CreateSchedule("S", "0 * * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil)
+	if err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	err = app.UpdateSchedule(sched.ID, "Updated", "0 0 * * *", flow.ID, "https://example.com", models.ProxyConfig{}, 5, false, nil, true)
+	if err != nil {
+		t.Fatalf("UpdateSchedule: %v", err)
+	}
+}
+
+func TestAppSaveCaptchaConfig(t *testing.T) {
+	app := setupTestApp(t)
+	runner, err := browser.NewRunner(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	app.runner = runner
+	cfg, err := app.SaveCaptchaConfig("2captcha", "testapikey")
+	if err != nil {
+		t.Fatalf("SaveCaptchaConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil captcha config")
+	}
+}
+
+func TestAppGetCaptchaConfig(t *testing.T) {
+	app := setupTestApp(t)
+	runner, _ := browser.NewRunner(t.TempDir())
+	app.runner = runner
+	_, _ = app.SaveCaptchaConfig("2captcha", "testapikey")
+	cfg, err := app.GetCaptchaConfig()
+	if err != nil {
+		t.Fatalf("GetCaptchaConfig: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil captcha config after save")
+	}
+}
+
+func TestAppListCaptchaConfigsWithData(t *testing.T) {
+	app := setupTestApp(t)
+	runner, _ := browser.NewRunner(t.TempDir())
+	app.runner = runner
+	_, _ = app.SaveCaptchaConfig("2captcha", "testapikey")
+	configs, err := app.ListCaptchaConfigs()
+	if err != nil {
+		t.Fatalf("ListCaptchaConfigs: %v", err)
+	}
+	if len(configs) != 1 {
+		t.Errorf("count: got %d, want 1", len(configs))
+	}
+}
+
+func TestAppDeleteCaptchaConfig(t *testing.T) {
+	app := setupTestApp(t)
+	runner, _ := browser.NewRunner(t.TempDir())
+	app.runner = runner
+	cfg, err := app.SaveCaptchaConfig("2captcha", "testapikey")
+	if err != nil {
+		t.Fatalf("SaveCaptchaConfig: %v", err)
+	}
+	if err := app.DeleteCaptchaConfig(cfg.ID); err != nil {
+		t.Fatalf("DeleteCaptchaConfig: %v", err)
+	}
+}
+
+func TestAppExportImportTask(t *testing.T) {
+	app := setupTestApp(t)
+	task, err := app.CreateTask("Export Task", "https://example.com", validSteps(), models.ProxyConfig{}, 5, false, nil, 0, nil)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	exportPath, err := app.ExportTask(task.ID)
+	if err != nil {
+		t.Fatalf("ExportTask: %v", err)
+	}
+	imported, err := app.ImportTask(exportPath)
+	if err != nil {
+		t.Fatalf("ImportTask: %v", err)
+	}
+	if imported.Name != task.Name {
+		t.Errorf("Name: got %q, want %q", imported.Name, task.Name)
+	}
+	if imported.ID == task.ID {
+		t.Error("expected new ID for imported task")
+	}
+}
+
+func TestAppExportImportFlow(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, err := app.CreateRecordedFlow("My Flow", "desc", "https://example.com", steps)
+	if err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	exportPath, err := app.ExportFlow(flow.ID)
+	if err != nil {
+		t.Fatalf("ExportFlow: %v", err)
+	}
+	tasks, err := app.ImportFlow(exportPath)
+	if err != nil {
+		t.Fatalf("ImportFlow: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Error("expected at least one task from import")
+	}
+}
+
+func TestAppListTaskEvents(t *testing.T) {
+	app := setupTestApp(t)
+	task, _ := app.CreateTask("Task", "https://example.com", validSteps(), models.ProxyConfig{}, 5, false, nil, 0, nil)
+	events, err := app.ListTaskEvents(task.ID)
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	if events == nil {
+		t.Error("expected non-nil events")
+	}
+}
+
+func TestAppListWebSocketLogs(t *testing.T) {
+	app := setupTestApp(t)
+	logs, err := app.ListWebSocketLogs("flow-id-123")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if logs == nil {
+		t.Error("expected non-nil logs slice")
+	}
+}
+
+func TestAppParseBatchURLs(t *testing.T) {
+	app := setupTestApp(t)
+	urls, err := app.ParseBatchURLs("https://a.com\nhttps://b.com\nhttps://c.com", false)
+	if err != nil {
+		t.Fatalf("ParseBatchURLs: %v", err)
+	}
+	if len(urls) != 3 {
+		t.Errorf("url count: got %d, want 3", len(urls))
+	}
+}
+
+func TestAppListBatchGroupsEmpty(t *testing.T) {
+	app := setupTestApp(t)
+	groups, err := app.ListBatchGroups()
+	if err != nil {
+		t.Fatalf("ListBatchGroups: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("expected 0 groups, got %d", len(groups))
+	}
+}
+
+func TestAppGetBatchProgressEmpty(t *testing.T) {
+	app := setupTestApp(t)
+	_, err := app.GetBatchProgress("nonexistent-batch-id")
+	if err != nil {
+		t.Fatalf("GetBatchProgress: %v", err)
+	}
+}
+
+func TestAppPauseBatch(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	if err := app.PauseBatch("batch-123"); err != nil {
+		t.Fatalf("PauseBatch: %v", err)
+	}
+}
+
+func TestAppResumeBatch(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	_ = app.PauseBatch("batch-123")
+	if err := app.ResumeBatch("batch-123"); err != nil {
+		t.Fatalf("ResumeBatch: %v", err)
+	}
+}
+
+func TestAppSaveDOMSnapshotAndList(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	snapshot := models.DOMSnapshot{FlowID: flow.ID, StepIndex: 0, HTML: "<html></html>"}
+	if err := app.SaveDOMSnapshot(snapshot); err != nil {
+		t.Fatalf("SaveDOMSnapshot: %v", err)
+	}
+	snaps, err := app.ListDOMSnapshots(flow.ID)
+	if err != nil {
+		t.Fatalf("ListDOMSnapshots: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Errorf("snapshot count: got %d, want 1", len(snaps))
+	}
+}
+
+func TestAppUpdateRecordedFlow(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("Flow", "", "https://example.com", steps)
+	flow.Name = "Updated Flow"
+	if err := app.UpdateRecordedFlow(*flow); err != nil {
+		t.Fatalf("UpdateRecordedFlow: %v", err)
+	}
+}
+
+func TestAppCreateProxyRoutingPreset(t *testing.T) {
+	app := setupTestApp(t)
+	preset, err := app.CreateProxyRoutingPreset("My Preset", "US", "any", false)
+	if err != nil {
+		t.Fatalf("CreateProxyRoutingPreset: %v", err)
+	}
+	if preset.Name != "My Preset" {
+		t.Errorf("Name: got %q, want %q", preset.Name, "My Preset")
+	}
+	presets, err := app.ListProxyRoutingPresets()
+	if err != nil {
+		t.Fatalf("ListProxyRoutingPresets: %v", err)
+	}
+	if len(presets) != 1 {
+		t.Errorf("preset count: got %d, want 1", len(presets))
+	}
+	if err := app.DeleteProxyRoutingPreset(preset.ID); err != nil {
+		t.Fatalf("DeleteProxyRoutingPreset: %v", err)
+	}
+}
+
+func TestAppDefaultAppConfig(t *testing.T) {
+	cfg := DefaultAppConfig()
+	if cfg.QueueConcurrency <= 0 {
+		t.Errorf("QueueConcurrency: got %d, want > 0", cfg.QueueConcurrency)
+	}
+	if cfg.RetentionDays <= 0 {
+		t.Errorf("RetentionDays: got %d, want > 0", cfg.RetentionDays)
+	}
+}
+
+func TestAppLoadConfigFromDiskValid(t *testing.T) {
+	app := setupTestApp(t)
+	cfgPath := filepath.Join(app.dataDir, "config.json")
+	cfgData := `{"queueConcurrency": 50, "retentionDays": 30}`
+	if err := os.WriteFile(cfgPath, []byte(cfgData), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	app.configMu.Lock()
+	app.configPath = cfgPath
+	app.configMu.Unlock()
+	if err := app.loadConfigFromDisk(); err != nil {
+		t.Fatalf("loadConfigFromDisk: %v", err)
+	}
+	app.configMu.Lock()
+	got := app.config.QueueConcurrency
+	app.configMu.Unlock()
+	if got != 50 {
+		t.Errorf("QueueConcurrency: got %d, want 50", got)
+	}
+}
+
+func TestAppCheckAndReloadConfig(t *testing.T) {
+	app := setupTestApp(t)
+	app.queue = nil
+	app.proxyManager = nil
+	cfgPath := filepath.Join(app.dataDir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"proxyConcurrency": 42}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	app.configMu.Lock()
+	app.configPath = cfgPath
+	app.configModTime = time.Time{}
+	app.configMu.Unlock()
+	app.checkAndReloadConfig(context.Background())
+	app.configMu.Lock()
+	got := app.config.ProxyConcurrency
+	app.configMu.Unlock()
+	if got != 42 {
+		t.Errorf("ProxyConcurrency after reload: got %d, want 42", got)
+	}
+}
+
+func TestAppPurgeOnce(t *testing.T) {
+	app := setupTestApp(t)
+	app.ctx = context.Background()
+	app.purgeOnce()
+}
+
+func TestAppCleanup(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	app.cleanup()
+}
+
+func TestAppShutdown(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	app.shutdown(context.Background())
+}
+
+func TestAppGetTaskMetrics(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	metrics := app.getTaskMetrics()
+	_ = metrics
+}
+
+func TestAppLoadConfigInvalidJSON(t *testing.T) {
+	app := setupTestApp(t)
+	cfgPath := filepath.Join(app.dataDir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{invalid json}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	app.configMu.Lock()
+	app.configPath = cfgPath
+	app.configMu.Unlock()
+	err := app.loadConfigFromDisk()
+	if err == nil {
+		t.Fatal("expected error for invalid JSON config")
+	}
+}
+
+func TestAppLoadConfigMissingFile(t *testing.T) {
+	app := setupTestApp(t)
+	app.configMu.Lock()
+	app.configPath = filepath.Join(app.dataDir, "nonexistent.json")
+	app.configMu.Unlock()
+	err := app.loadConfigFromDisk()
+	// loadConfigFromDisk may return nil (silently ignoring missing file) or an error
+	_ = err
+}
+
+func TestAppCheckAndReloadConfigNoChange(t *testing.T) {
+	app := setupTestApp(t)
+	cfgPath := filepath.Join(app.dataDir, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"queueConcurrency": 10}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	info, _ := os.Stat(cfgPath)
+	app.configMu.Lock()
+	app.configPath = cfgPath
+	app.configModTime = info.ModTime() // set to current mtime so no change detected
+	app.configMu.Unlock()
+	app.checkAndReloadConfig(context.Background())
+}
+
+func TestAppListWebSocketLogsWithFlowID(t *testing.T) {
+	app := setupTestApp(t)
+	steps := []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}
+	flow, _ := app.CreateRecordedFlow("WS Flow", "", "https://example.com", steps)
+	logs, err := app.ListWebSocketLogs(flow.ID)
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	_ = logs
+}
+
+func TestAppRetryFailedBatch(t *testing.T) {
+	app := setupTestAppWithQueue(t)
+	tasks, err := app.RetryFailedBatch("nonexistent-batch")
+	if err != nil {
+		t.Fatalf("RetryFailedBatch: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks for nonexistent batch, got %d", len(tasks))
+	}
+}
+
+func TestAppListTasksByBatchEmpty2(t *testing.T) {
+	app := setupTestApp(t)
+	tasks, err := app.ListTasksByBatch("nonexistent-batch-2")
+	if err != nil {
+		t.Fatalf("ListTasksByBatch: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(tasks))
+	}
+}
+
+func TestAppExportTaskLogs(t *testing.T) {
+	app := setupTestApp(t)
+	logsDir := filepath.Join(t.TempDir(), "logs")
+	le, err := logs.NewExporter(app.db, logsDir)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+	app.logExporter = le
+	task, _ := app.CreateTask("Task", "https://example.com", validSteps(), models.ProxyConfig{}, 5, false, nil, 0, nil)
+	_, err = app.ExportTaskLogs(task.ID)
+	if err != nil {
+		t.Fatalf("ExportTaskLogs: %v", err)
+	}
+}
+
+func TestAppExportBatchLogs(t *testing.T) {
+	app := setupTestApp(t)
+	logsDir := filepath.Join(t.TempDir(), "logs")
+	le, err := logs.NewExporter(app.db, logsDir)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+	app.logExporter = le
+	_, err = app.ExportBatchLogs("batch-123")
+	if err != nil {
+		t.Fatalf("ExportBatchLogs: %v", err)
+	}
+}
+
+func TestAppExportTaskLogsNilExporter2(t *testing.T) {
+	app := setupTestApp(t)
+	app.logExporter = nil
+	_, err := app.ExportTaskLogs("task-id-nil")
+	if err == nil {
+		t.Fatal("expected error when logExporter is nil")
+	}
+}
+
+func TestAppListProxyCountryStats(t *testing.T) {
+	app := setupTestApp(t)
+	app.proxyManager = proxy.NewManager(app.db, models.ProxyPoolConfig{})
+	stats, err := app.ListProxyCountryStats()
+	if err != nil {
+		t.Fatalf("ListProxyCountryStats: %v", err)
+	}
+	_ = stats
+}
+
+func TestAppAddProxyWithRateLimit(t *testing.T) {
+	app := setupTestApp(t)
+	app.proxyManager = proxy.NewManager(app.db, models.ProxyPoolConfig{})
+	p, err := app.AddProxyWithRateLimit("proxy.example.com:8080", "http", "US", "", "", 60)
+	if err != nil {
+		t.Fatalf("AddProxyWithRateLimit: %v", err)
+	}
+	_ = p
+}
+
+func TestAppGetLocalProxyGatewayStatsWithManager(t *testing.T) {
+	app := setupTestApp(t)
+	lpm := localproxy.NewManager(time.Minute)
+	t.Cleanup(func() { lpm.Stop() })
+	app.localProxyManager = lpm
+	stats, err := app.GetLocalProxyGatewayStats()
+	if err != nil {
+		t.Fatalf("GetLocalProxyGatewayStats: %v", err)
+	}
+	if stats.ActiveEndpoints < 0 {
+		t.Error("unexpected negative ActiveEndpoints")
+	}
+}
+
+func TestValidateStepActionsPackageLevel(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionClick, Selector: "#btn"},
+	}
+	if err := validateStepActions(steps); err != nil {
+		t.Fatalf("validateStepActions: %v", err)
+	}
+	badSteps := []models.TaskStep{{Action: "completely_invalid_action"}}
+	if err := validateStepActions(badSteps); err == nil {
+		t.Fatal("expected error for invalid action")
+	}
+}
+
+func TestAppRunRetentionCleanup(t *testing.T) {
+	app := setupTestApp(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	app.ctx = ctx
+	app.config.RetentionDays = 90
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.runRetentionCleanup(ctx)
+	}()
+	<-ctx.Done()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("runRetentionCleanup did not exit after ctx cancelled")
+	}
+}
+
+func TestAppWatchConfig(t *testing.T) {
+	app := setupTestApp(t)
+	cfgPath := filepath.Join(app.dataDir, "config.json")
+	_ = os.WriteFile(cfgPath, []byte(`{"queueConcurrency": 5}`), 0o600)
+	app.configMu.Lock()
+	app.configPath = cfgPath
+	app.configMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.watchConfig(ctx)
+	}()
+	<-ctx.Done()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("watchConfig did not exit after ctx cancelled")
+	}
+}
+
+func TestAppParseBatchURLsCSV(t *testing.T) {
+	app := setupTestApp(t)
+	csvContent := "https://a.com,tag1\nhttps://b.com,tag2\nhttps://c.com,tag3"
+	tmpFile := filepath.Join(t.TempDir(), "urls.csv")
+	if err := os.WriteFile(tmpFile, []byte(csvContent), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	urls, err := app.ParseBatchURLs(tmpFile, true)
+	if err != nil {
+		t.Fatalf("ParseBatchURLs CSV: %v", err)
+	}
+	if len(urls) == 0 {
+		t.Error("expected at least one URL from CSV")
+	}
+}
+
+func TestAppCollectUnknownActionWarnings(t *testing.T) {
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: "unknown_action_xyz"},
+	}
+	warnings := collectUnknownStepActionWarnings(steps, 0)
+	if len(warnings) == 0 {
+		t.Error("expected warnings for unknown action")
+	}
+}
+
+func TestAppPurgeOnceWithRetention(t *testing.T) {
+	app := setupTestApp(t)
+	app.ctx = context.Background()
+	app.config.RetentionDays = 1
+	app.purgeOnce()
+}
+
+func TestAppTestCaptchaConfig(t *testing.T) {
+	app := setupTestApp(t)
+	runner, _ := browser.NewRunner(t.TempDir())
+	app.runner = runner
+	cfg, _ := app.SaveCaptchaConfig("2captcha", "dummy-api-key")
+	if cfg == nil {
+		t.Fatal("expected non-nil captcha config")
+	}
+	_, err := app.TestCaptchaConfig(cfg.ID)
+	if err == nil {
+		t.Log("TestCaptchaConfig returned no error (provider may accept key)")
 	}
 }

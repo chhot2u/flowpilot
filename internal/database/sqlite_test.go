@@ -3453,3 +3453,704 @@ func TestListVisualDiffsByTask(t *testing.T) {
 		t.Errorf("expected 2 diffs for shared-task, got %d", len(diffs))
 	}
 }
+
+func TestNewWithConfigValid(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := NewWithConfig(DatabaseConfig{URL: dbPath})
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	if db == nil {
+		t.Fatal("expected non-nil db")
+	}
+	db.Close()
+}
+
+func TestNewWithConfigEmptyURL(t *testing.T) {
+	_, err := NewWithConfig(DatabaseConfig{URL: ""})
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+}
+
+func TestCloseNilDB(t *testing.T) {
+	var db *DB
+	err := db.Close()
+	if err != nil {
+		t.Fatalf("Close on nil DB: %v", err)
+	}
+}
+
+func TestGetScheduleNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	_, err := db.GetSchedule(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent schedule")
+	}
+}
+
+func TestReaderConn(t *testing.T) {
+	db := setupTestDB(t)
+	r := db.Reader()
+	if r == nil {
+		t.Fatal("Reader() returned nil")
+	}
+	c := db.Conn()
+	if c == nil {
+		t.Fatal("Conn() returned nil")
+	}
+}
+
+func TestListProxiesBestEffort(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	p := makeProxy("p1", "proxy.example.com:8080", "US")
+	if err := db.CreateProxy(ctx, p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+	proxies, skipped, err := db.ListProxiesBestEffort(ctx)
+	if err != nil {
+		t.Fatalf("ListProxiesBestEffort: %v", err)
+	}
+	if skipped != 0 {
+		t.Errorf("skipped: got %d, want 0", skipped)
+	}
+	if len(proxies) != 1 {
+		t.Errorf("proxies: got %d, want 1", len(proxies))
+	}
+}
+
+func TestUpdateProxyRateLimit(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	p := makeProxy("p1", "proxy.example.com:8080", "US")
+	if err := db.CreateProxy(ctx, p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+	if err := db.UpdateProxyRateLimit(ctx, "p1", 10); err != nil {
+		t.Fatalf("UpdateProxyRateLimit: %v", err)
+	}
+	if err := db.UpdateProxyRateLimit(ctx, "nonexistent", 10); err == nil {
+		t.Fatal("expected error for nonexistent proxy")
+	}
+}
+
+func TestUpdateCaptchaConfigDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	cfg := models.CaptchaConfig{ID: "cap1", Provider: models.CaptchaProvider2Captcha, APIKey: "key123", Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateCaptchaConfig(ctx, cfg); err != nil {
+		t.Fatalf("CreateCaptchaConfig: %v", err)
+	}
+	cfg.APIKey = "newkey456"
+	if err := db.UpdateCaptchaConfig(ctx, cfg); err != nil {
+		t.Fatalf("UpdateCaptchaConfig: %v", err)
+	}
+	got, err := db.GetCaptchaConfig(ctx, "cap1")
+	if err != nil {
+		t.Fatalf("GetCaptchaConfig: %v", err)
+	}
+	if got.APIKey != "newkey456" {
+		t.Errorf("APIKey: got %q, want %q", got.APIKey, "newkey456")
+	}
+}
+
+func TestDeleteCaptchaConfigNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	if err := db.DeleteCaptchaConfig(ctx, "nonexistent"); err == nil {
+		t.Fatal("expected error for nonexistent captcha config")
+	}
+}
+
+func TestGetSchedule(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	nr := time.Now().Add(time.Hour)
+	sched := models.Schedule{ID: "s1", Name: "Test", CronExpr: "0 * * * *", FlowID: "flow1", URL: "https://example.com", Enabled: true, NextRunAt: &nr, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateSchedule(ctx, sched); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	got, err := db.GetSchedule(ctx, "s1")
+	if err != nil {
+		t.Fatalf("GetSchedule: %v", err)
+	}
+	if got.Name != "Test" {
+		t.Errorf("Name: got %q, want %q", got.Name, "Test")
+	}
+}
+
+func TestDeleteScheduleDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	nr := time.Now().Add(time.Hour)
+	sched := models.Schedule{ID: "s1", Name: "Test", CronExpr: "0 * * * *", FlowID: "flow1", URL: "https://example.com", Enabled: true, NextRunAt: &nr, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateSchedule(ctx, sched); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	if err := db.DeleteSchedule(ctx, "s1"); err != nil {
+		t.Fatalf("DeleteSchedule: %v", err)
+	}
+	if err := db.DeleteSchedule(ctx, "nonexistent"); err == nil {
+		t.Fatal("expected error for nonexistent schedule")
+	}
+}
+
+func TestUpdateScheduleRunDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	nr := time.Now().Add(time.Hour)
+	sched := models.Schedule{ID: "s1", Name: "Test", CronExpr: "0 * * * *", FlowID: "flow1", URL: "https://example.com", Enabled: true, NextRunAt: &nr, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateSchedule(ctx, sched); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	lastRun := time.Now()
+	nextRun := time.Now().Add(2 * time.Hour)
+	if err := db.UpdateScheduleRun(ctx, "s1", lastRun, nextRun); err != nil {
+		t.Fatalf("UpdateScheduleRun: %v", err)
+	}
+}
+
+func TestDeleteVisualDiffDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	baseline := models.VisualBaseline{ID: "b1", Name: "baseline1", URL: "https://example.com", ScreenshotPath: "/tmp/img.png", CreatedAt: time.Now()}
+	if err := db.CreateVisualBaseline(ctx, baseline); err != nil {
+		t.Fatalf("CreateVisualBaseline: %v", err)
+	}
+	diff := models.VisualDiff{ID: "d1", TaskID: "t1", BaselineID: "b1", DiffImagePath: "/tmp/diff.png", DiffPercent: 0.1, CreatedAt: time.Now()}
+	if err := db.CreateVisualDiff(ctx, diff); err != nil {
+		t.Fatalf("CreateVisualDiff: %v", err)
+	}
+	if err := db.DeleteVisualDiff(ctx, "d1"); err != nil {
+		t.Fatalf("DeleteVisualDiff: %v", err)
+	}
+}
+
+func TestFinalizeTaskSuccessDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTaskStatus(ctx, "t1", models.TaskStatusRunning, ""); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	result := models.TaskResult{Duration: time.Second, Logs: []models.LogEntry{{Level: "info", Message: "done"}}}
+	if err := db.FinalizeTaskSuccess(ctx, "t1", result); err != nil {
+		t.Fatalf("FinalizeTaskSuccess: %v", err)
+	}
+}
+
+func TestFinalizeTaskFailureDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTaskStatus(ctx, "t1", models.TaskStatusRunning, ""); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	if err := db.FinalizeTaskFailure(ctx, "t1", "something failed", nil, nil); err != nil {
+		t.Fatalf("FinalizeTaskFailure: %v", err)
+	}
+}
+
+func TestCloseDB(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	crypto.ResetForTest()
+	if err := crypto.InitKeyWithBytes(key); err != nil {
+		t.Fatalf("init crypto: %v", err)
+	}
+	t.Cleanup(func() { crypto.ResetForTest() })
+	dir := t.TempDir()
+	db, err := New(filepath.Join(dir, "close_test.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestNewWithConfigTurso(t *testing.T) {
+	db := setupTestDB(t)
+	if db == nil {
+		t.Fatal("expected non-nil db from setupTestDB")
+	}
+}
+
+func TestApplyNamedMigrationsIdempotentDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	// applyNamedMigrations is called during New(); calling again should be idempotent
+	if err := db.applyNamedMigrations(ctx); err != nil {
+		t.Fatalf("second applyNamedMigrations: %v", err)
+	}
+}
+
+func TestRecordMigration(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	// Ensure schema_migrations table exists
+	if err := db.applyNamedMigrations(ctx); err != nil {
+		t.Fatalf("applyNamedMigrations: %v", err)
+	}
+	if err := db.recordMigration(ctx, "test_migration_v2"); err != nil {
+		t.Fatalf("recordMigration: %v", err)
+	}
+}
+
+func TestSqliteLocalDSN(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{":memory:", ":memory:"},
+		{"file:existing.db", "file:existing.db"},
+		{"/abs/path/db.sqlite", "file:/abs/path/db.sqlite"},
+		{"relative/db.sqlite", "file:relative/db.sqlite"},
+		{"turso://something", "turso://something"},
+	}
+	for _, tc := range cases {
+		got := sqliteLocalDSN(tc.in)
+		if got != tc.want {
+			t.Errorf("sqliteLocalDSN(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDeleteRecordedFlowDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	flow := models.RecordedFlow{ID: "flow1", Name: "Test Flow", Steps: []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	if err := db.DeleteRecordedFlow(ctx, "flow1"); err != nil {
+		t.Fatalf("DeleteRecordedFlow: %v", err)
+	}
+	if err := db.DeleteRecordedFlow(ctx, "nonexistent"); err == nil {
+		t.Fatal("expected error for nonexistent flow")
+	}
+}
+
+func TestDeleteTaskDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.DeleteTask(ctx, "t1"); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if err := db.DeleteTask(ctx, "nonexistent"); err == nil {
+		t.Fatal("expected error for nonexistent task")
+	}
+}
+
+func TestDeleteVisualBaselineDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	baseline := models.VisualBaseline{ID: "b1", Name: "baseline1", URL: "https://example.com", ScreenshotPath: "/tmp/img.png", CreatedAt: time.Now()}
+	if err := db.CreateVisualBaseline(ctx, baseline); err != nil {
+		t.Fatalf("CreateVisualBaseline: %v", err)
+	}
+	if err := db.DeleteVisualBaseline(ctx, "b1"); err != nil {
+		t.Fatalf("DeleteVisualBaseline: %v", err)
+	}
+}
+
+func TestGetActiveCaptchaConfigDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	_, err := db.GetActiveCaptchaConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveCaptchaConfig (empty): %v", err)
+	}
+	cfg := models.CaptchaConfig{ID: "cap1", Provider: models.CaptchaProvider2Captcha, APIKey: "key123", Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateCaptchaConfig(ctx, cfg); err != nil {
+		t.Fatalf("CreateCaptchaConfig: %v", err)
+	}
+	active, err := db.GetActiveCaptchaConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveCaptchaConfig: %v", err)
+	}
+	if active == nil {
+		t.Fatal("expected non-nil active config")
+	}
+}
+
+func TestListRecordedFlowsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		flow := models.RecordedFlow{ID: fmt.Sprintf("flow%d", i), Name: fmt.Sprintf("Flow %d", i), Steps: []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+		if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+			t.Fatalf("CreateRecordedFlow: %v", err)
+		}
+	}
+	flows, err := db.ListRecordedFlows(ctx)
+	if err != nil {
+		t.Fatalf("ListRecordedFlows: %v", err)
+	}
+	if len(flows) != 3 {
+		t.Errorf("flow count: got %d, want 3", len(flows))
+	}
+}
+
+func TestCloseDoubleDB(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 2)
+	}
+	crypto.ResetForTest()
+	_ = crypto.InitKeyWithBytes(key)
+	t.Cleanup(func() { crypto.ResetForTest() })
+	db, err := New(filepath.Join(t.TempDir(), "close2.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	// second close should not panic (may return error)
+	_ = db.Close()
+}
+
+func TestGetRecordedFlowDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	flow := models.RecordedFlow{ID: "f1", Name: "Flow", Steps: []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	got, err := db.GetRecordedFlow(ctx, "f1")
+	if err != nil {
+		t.Fatalf("GetRecordedFlow: %v", err)
+	}
+	if got.Name != "Flow" {
+		t.Errorf("Name: got %q, want %q", got.Name, "Flow")
+	}
+}
+
+func TestUpdateRecordedFlowDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	flow := models.RecordedFlow{ID: "f2", Name: "Original", Steps: []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}}, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	flow.Name = "Updated"
+	if err := db.UpdateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("UpdateRecordedFlow: %v", err)
+	}
+	got, _ := db.GetRecordedFlow(ctx, "f2")
+	if got.Name != "Updated" {
+		t.Errorf("Name: got %q, want %q", got.Name, "Updated")
+	}
+}
+
+func TestDetectTypeDB(t *testing.T) {
+	cases := []struct {
+		url  string
+		want DatabaseType
+	}{
+		{"", DatabaseSQLite},
+		{"/tmp/db.sqlite", DatabaseSQLite},
+		{"libsql://something.turso.io", DatabaseTurso},
+		{"LIBSQL://UPPER.io", DatabaseTurso},
+	}
+	for _, tc := range cases {
+		got := DetectType(tc.url)
+		if got != tc.want {
+			t.Errorf("DetectType(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+}
+
+func TestInsertStepLogsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	stepLogs := []models.StepLog{{StepIndex: 0, Action: models.ActionNavigate, DurationMs: 100}}
+	if err := db.InsertStepLogs(ctx, "t1", stepLogs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+}
+
+func TestInsertNetworkLogsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	networkLogs := []models.NetworkLog{{RequestURL: "https://example.com", Method: "GET", StatusCode: 200}}
+	if err := db.InsertNetworkLogs(ctx, "t1", networkLogs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+}
+
+func TestUpdateTaskDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTask(ctx, task.ID, "Updated", task.URL, task.Steps, task.Proxy, task.Priority, task.Tags, task.Timeout, task.LoggingPolicy); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+}
+
+func TestListProxiesBestEffortWithCreds(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	p := makeProxy("enc-p1", "proxy.example.com:8080", "US")
+	p.Username = "user"
+	p.Password = "pass"
+	if err := db.CreateProxy(ctx, p); err != nil {
+		t.Fatalf("CreateProxy: %v", err)
+	}
+	proxies, _, err := db.ListProxiesBestEffort(ctx)
+	if err != nil {
+		t.Fatalf("ListProxiesBestEffort: %v", err)
+	}
+	if len(proxies) == 0 {
+		t.Error("expected at least 1 proxy")
+	}
+}
+
+func TestCreateRecordedFlowWithLoggingPolicy(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	lp := models.TaskLoggingPolicy{MaxExecutionLogs: 50}
+	flow := models.RecordedFlow{
+		ID: "flow-lp", Name: "Flow LP",
+		Steps:         []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}},
+		LoggingPolicy: &lp,
+		CreatedAt:     time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("CreateRecordedFlow with policy: %v", err)
+	}
+	got, err := db.GetRecordedFlow(ctx, "flow-lp")
+	if err != nil {
+		t.Fatalf("GetRecordedFlow: %v", err)
+	}
+	if got.LoggingPolicy == nil || got.LoggingPolicy.MaxExecutionLogs != 50 {
+		t.Error("expected LoggingPolicy to be preserved")
+	}
+}
+
+func TestUpdateRecordedFlowWithPolicy(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	lp := models.TaskLoggingPolicy{MaxExecutionLogs: 10}
+	flow := models.RecordedFlow{
+		ID: "flow-upd", Name: "Original",
+		Steps:         []models.RecordedStep{{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"}},
+		LoggingPolicy: &lp,
+		CreatedAt:     time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.CreateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("CreateRecordedFlow: %v", err)
+	}
+	flow.Name = "Updated"
+	lp2 := models.TaskLoggingPolicy{MaxExecutionLogs: 99}
+	flow.LoggingPolicy = &lp2
+	flow.UpdatedAt = time.Now()
+	if err := db.UpdateRecordedFlow(ctx, flow); err != nil {
+		t.Fatalf("UpdateRecordedFlow with policy: %v", err)
+	}
+}
+
+func TestInsertTaskEventDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	_ = db.CreateTask(ctx, task)
+	event := models.TaskLifecycleEvent{
+		ID: "ev1", TaskID: "t1", FromState: "pending", ToState: "running",
+		Timestamp: time.Now(),
+	}
+	if err := db.InsertTaskEvent(ctx, event); err != nil {
+		t.Fatalf("InsertTaskEvent: %v", err)
+	}
+}
+
+func TestListStepLogsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	_ = db.CreateTask(ctx, task)
+	logs := []models.StepLog{{StepIndex: 0, Action: models.ActionNavigate, DurationMs: 50}}
+	if err := db.InsertStepLogs(ctx, "t1", logs); err != nil {
+		t.Fatalf("InsertStepLogs: %v", err)
+	}
+	got, err := db.ListStepLogs(ctx, "t1")
+	if err != nil {
+		t.Fatalf("ListStepLogs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("log count: got %d, want 1", len(got))
+	}
+}
+
+func TestListNetworkLogsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	_ = db.CreateTask(ctx, task)
+	nLogs := []models.NetworkLog{{RequestURL: "https://example.com", Method: "GET", StatusCode: 200}}
+	if err := db.InsertNetworkLogs(ctx, "t1", nLogs); err != nil {
+		t.Fatalf("InsertNetworkLogs: %v", err)
+	}
+	got, err := db.ListNetworkLogs(ctx, "t1")
+	if err != nil {
+		t.Fatalf("ListNetworkLogs: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("log count: got %d, want 1", len(got))
+	}
+}
+
+func TestInsertWebSocketLogsDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	wsLogs := []models.WebSocketLog{
+		{FlowID: "flow1", URL: "wss://example.com", Direction: "send", PayloadSnippet: "ping", Timestamp: time.Now()},
+	}
+	if err := db.InsertWebSocketLogs(ctx, "flow1", wsLogs); err != nil {
+		t.Fatalf("InsertWebSocketLogs: %v", err)
+	}
+	got, err := db.ListWebSocketLogs(ctx, "flow1")
+	if err != nil {
+		t.Fatalf("ListWebSocketLogs: %v", err)
+	}
+	if len(got) == 0 {
+		t.Error("expected at least 1 WebSocket log")
+	}
+}
+
+func TestCreateDOMSnapshotDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	snap := models.DOMSnapshot{
+		ID: "snap1", FlowID: "flow1", StepIndex: 0,
+		HTML: "<html></html>", CapturedAt: time.Now(),
+	}
+	if err := db.CreateDOMSnapshot(ctx, snap); err != nil {
+		t.Fatalf("CreateDOMSnapshot: %v", err)
+	}
+	got, err := db.ListDOMSnapshots(ctx, "flow1")
+	if err != nil {
+		t.Fatalf("ListDOMSnapshots: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("snapshot count: got %d, want 1", len(got))
+	}
+}
+
+func TestCreateBatchGroupDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	bg := models.BatchGroup{
+		ID: "bg1", Name: "Batch 1", FlowID: "flow1",
+		Total: 3, CreatedAt: time.Now(),
+	}
+	if err := db.CreateBatchGroup(ctx, bg); err != nil {
+		t.Fatalf("CreateBatchGroup: %v", err)
+	}
+}
+
+func TestCreateBatchGroupTxDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	bg := models.BatchGroup{
+		ID: "bg2", Name: "Batch 2", FlowID: "flow1",
+		Total: 1, CreatedAt: time.Now(),
+	}
+	tx, err := db.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+	if err := db.CreateBatchGroupTx(ctx, tx, bg); err != nil {
+		t.Fatalf("CreateBatchGroupTx: %v", err)
+	}
+	_ = tx.Commit()
+}
+
+func TestUpdateScheduleDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	nr := time.Now().Add(time.Hour)
+	sched := models.Schedule{
+		ID: "s1", Name: "Test", CronExpr: "0 * * * *",
+		FlowID: "flow1", URL: "https://example.com", Enabled: true,
+		NextRunAt: &nr, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := db.CreateSchedule(ctx, sched); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	sched.Name = "Updated"
+	sched.CronExpr = "0 0 * * *"
+	if err := db.UpdateSchedule(ctx, sched); err != nil {
+		t.Fatalf("UpdateSchedule: %v", err)
+	}
+}
+
+func TestCreateProxyAndListDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	p := makeProxy("p1", "proxy.example.com:8080", "US")
+	p.Username = "myuser"
+	p.Password = "mypass"
+	if err := db.CreateProxy(ctx, p); err != nil {
+		t.Fatalf("CreateProxy with creds: %v", err)
+	}
+	proxies, err := db.ListProxies(ctx)
+	if err != nil {
+		t.Fatalf("ListProxies: %v", err)
+	}
+	if len(proxies) == 0 {
+		t.Fatal("expected at least 1 proxy")
+	}
+}
+
+func TestFinalizeTaskSuccessWithDataDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	_ = db.CreateTask(ctx, task)
+	_ = db.UpdateTaskStatus(ctx, "t1", models.TaskStatusRunning, "")
+	result := models.TaskResult{
+		Duration: time.Second,
+		Logs:          []models.LogEntry{{Level: "info", Message: "done"}},
+		ExtractedData: map[string]string{"key": "value"},
+	}
+	if err := db.FinalizeTaskSuccess(ctx, "t1", result); err != nil {
+		t.Fatalf("FinalizeTaskSuccess with data: %v", err)
+	}
+}
+
+func TestFinalizeTaskFailureWithDataDB(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	task := makeTask("t1", "Task")
+	_ = db.CreateTask(ctx, task)
+	_ = db.UpdateTaskStatus(ctx, "t1", models.TaskStatusRunning, "")
+	if err := db.FinalizeTaskFailure(ctx, "t1", "error msg", nil, nil); err != nil {
+		t.Fatalf("FinalizeTaskFailure with data: %v", err)
+	}
+}

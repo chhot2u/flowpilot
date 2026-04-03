@@ -530,3 +530,373 @@ func TestCaptureAdScreenshotError(t *testing.T) {
 		t.Fatalf("expected 0 screenshots on error, got %d", len(result.Screenshots))
 	}
 }
+
+func TestExecVariableSet(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-set", ExtractedData: make(map[string]string)}
+
+	err := r.execVariableSet(context.Background(), models.TaskStep{Action: models.ActionVariableSet, VarName: "myvar", Value: "myvalue"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["var_myvar"] != "myvalue" {
+		t.Errorf("expected var_myvar='myvalue', got %q", result.ExtractedData["var_myvar"])
+	}
+}
+
+func TestExecVariableSetMissingVarName(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-set-err", ExtractedData: make(map[string]string)}
+
+	err := r.execVariableSet(context.Background(), models.TaskStep{Action: models.ActionVariableSet}, result)
+	if err == nil || !strings.Contains(err.Error(), "varName is required") {
+		t.Errorf("expected varName error, got: %v", err)
+	}
+}
+
+func TestExecVariableMath(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-math", ExtractedData: make(map[string]string)}
+	result.ExtractedData["var_counter"] = "10"
+
+	err := r.execVariableMath(context.Background(), models.TaskStep{Action: models.ActionVariableMath, VarName: "counter", Operator: "+", Value: "5"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["var_counter"] != "15" {
+		t.Errorf("expected var_counter='15', got %q", result.ExtractedData["var_counter"])
+	}
+}
+
+func TestExecVariableMathDivisionByZero(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-math-div", ExtractedData: make(map[string]string)}
+	result.ExtractedData["var_val"] = "10"
+
+	err := r.execVariableMath(context.Background(), models.TaskStep{Action: models.ActionVariableMath, VarName: "val", Operator: "/", Value: "0"}, result)
+	if err == nil || !strings.Contains(err.Error(), "division by zero") {
+		t.Errorf("expected division by zero error, got: %v", err)
+	}
+}
+
+func TestExecVariableString(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-str", ExtractedData: make(map[string]string)}
+	result.ExtractedData["var_text"] = "hello"
+
+	err := r.execVariableString(context.Background(), models.TaskStep{Action: models.ActionVariableString, VarName: "text", Operator: "append", Value: " world"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["var_text"] != "hello world" {
+		t.Errorf("expected var_text='hello world', got %q", result.ExtractedData["var_text"])
+	}
+}
+
+func TestExecVariableStringUpper(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "var-upper", ExtractedData: make(map[string]string)}
+	result.ExtractedData["var_text"] = "hello"
+
+	err := r.execVariableString(context.Background(), models.TaskStep{Action: models.ActionVariableString, VarName: "text", Operator: "upper"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["var_text"] != "HELLO" {
+		t.Errorf("expected var_text='HELLO', got %q", result.ExtractedData["var_text"])
+	}
+}
+
+func TestExecHover(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execHover(context.Background(), models.TaskStep{Selector: "#elem"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecHoverMissingSelector(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execHover(context.Background(), models.TaskStep{})
+	if err == nil || !strings.Contains(err.Error(), "selector is required") {
+		t.Errorf("expected selector error, got: %v", err)
+	}
+}
+
+func TestExecDragDrop(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execDragDrop(context.Background(), models.TaskStep{Selector: "#source", Target: "#target"})
+	if err == nil || !strings.Contains(err.Error(), "drag operation failed") {
+		t.Fatalf("expected drag operation failed, got: %v", err)
+	}
+}
+
+func TestExecDragDropMissingSource(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execDragDrop(context.Background(), models.TaskStep{Target: "#target"})
+	if err == nil || !strings.Contains(err.Error(), "source selector") {
+		t.Errorf("expected source selector error, got: %v", err)
+	}
+}
+
+func TestExecDragDropMissingTarget(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execDragDrop(context.Background(), models.TaskStep{Selector: "#source"})
+	if err == nil || !strings.Contains(err.Error(), "target selector") {
+		t.Errorf("expected target selector error, got: %v", err)
+	}
+}
+
+func TestExecContextClick(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execContextClick(context.Background(), models.TaskStep{Selector: "#elem"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecContextClickMissingSelector(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execContextClick(context.Background(), models.TaskStep{})
+	if err == nil || !strings.Contains(err.Error(), "selector is required") {
+		t.Errorf("expected selector error, got: %v", err)
+	}
+}
+
+func TestExecHighlight(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "highlight", ExtractedData: make(map[string]string)}
+
+	err := r.execHighlight(context.Background(), models.TaskStep{Selector: "#elem", Value: "red"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecGetCookies(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "getcookies", ExtractedData: make(map[string]string)}
+
+	err := r.execGetCookies(context.Background(), models.TaskStep{}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecSetCookie(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "setcookie", ExtractedData: make(map[string]string)}
+
+	err := r.execSetCookie(context.Background(), models.TaskStep{Name: "mycookie", Value: "myvalue"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecSetCookieMissingName(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "setcookie-err", ExtractedData: make(map[string]string)}
+
+	err := r.execSetCookie(context.Background(), models.TaskStep{Value: "myvalue"}, result)
+	if err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Errorf("expected name error, got: %v", err)
+	}
+}
+
+func TestExecDeleteCookies(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "delcookies", ExtractedData: make(map[string]string)}
+
+	err := r.execDeleteCookies(context.Background(), models.TaskStep{}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecGetStorage(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "getstorage", ExtractedData: make(map[string]string)}
+
+	err := r.execGetStorage(context.Background(), models.TaskStep{Selector: "key1"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecSetStorage(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "setstorage", ExtractedData: make(map[string]string)}
+
+	err := r.execSetStorage(context.Background(), models.TaskStep{Selector: "key1", Value: "val1"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecSetStorageMissingKey(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "setstorage-err", ExtractedData: make(map[string]string)}
+
+	err := r.execSetStorage(context.Background(), models.TaskStep{Value: "val1"}, result)
+	if err == nil || !strings.Contains(err.Error(), "key is required") {
+		t.Errorf("expected key error, got: %v", err)
+	}
+}
+
+func TestExecDeleteStorage(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "delstorage", ExtractedData: make(map[string]string)}
+
+	err := r.execDeleteStorage(context.Background(), models.TaskStep{Selector: "key1"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecDeleteStorageMissingKey(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "delstorage-err", ExtractedData: make(map[string]string)}
+
+	err := r.execDeleteStorage(context.Background(), models.TaskStep{}, result)
+	if err == nil || !strings.Contains(err.Error(), "key is required") {
+		t.Errorf("expected key error, got: %v", err)
+	}
+}
+
+func TestExecIfExists(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ifexists", ExtractedData: make(map[string]string)}
+
+	err := r.execIfExists(context.Background(), models.TaskStep{Selector: "#elem"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["_if_exists_result"]; !ok {
+		t.Error("expected _if_exists_result in extracted data")
+	}
+}
+
+func TestExecIfNotExists(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ifnotexists", ExtractedData: make(map[string]string)}
+
+	err := r.execIfNotExists(context.Background(), models.TaskStep{Selector: "#elem"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["_if_not_exists_result"]; !ok {
+		t.Error("expected _if_not_exists_result in extracted data")
+	}
+}
+
+func TestExecIfVisible(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ifvisible", ExtractedData: make(map[string]string)}
+
+	err := r.execIfVisible(context.Background(), models.TaskStep{Selector: "#elem"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["_if_visible_result"]; !ok {
+		t.Error("expected _if_visible_result in extracted data")
+	}
+}
+
+func TestExecIfEnabled(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "ifenabled", ExtractedData: make(map[string]string)}
+
+	err := r.execIfEnabled(context.Background(), models.TaskStep{Selector: "#elem"}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result.ExtractedData["_if_enabled_result"]; !ok {
+		t.Error("expected _if_enabled_result in extracted data")
+	}
+}
+
+func TestExecDebugPause(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "debugpause", ExtractedData: make(map[string]string)}
+
+	err := r.execDebugPause(context.Background(), models.TaskStep{}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["_debug_paused"] != "true" {
+		t.Error("expected _debug_paused='true'")
+	}
+}
+
+func TestExecDebugResume(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "debugresume", ExtractedData: make(map[string]string)}
+
+	err := r.execDebugResume(context.Background(), models.TaskStep{}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["_debug_paused"] != "false" {
+		t.Error("expected _debug_paused='false'")
+	}
+}
+
+func TestExecAntiBot(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{TaskID: "antibot", ExtractedData: make(map[string]string)}
+
+	err := r.execAntiBot(context.Background(), models.TaskStep{}, result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExtractedData["_anti_bot_enabled"] != "true" {
+		t.Error("expected _anti_bot_enabled='true'")
+	}
+}
+
+func TestExecRandomMouse(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+
+	err := r.execRandomMouse(context.Background(), models.TaskStep{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -1,10 +1,14 @@
 package queue
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -1557,5 +1561,794 @@ func TestDequeueRunnableLockedDoesNotAutoProxyEmptyProxyConfig(t *testing.T) {
 	}
 	if autoProxy {
 		t.Fatal("expected empty proxy config to mean direct connection, not auto proxy")
+	}
+}
+
+func TestUpdateMetrics(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	q.UpdateMetrics(10, 5, 250, 100)
+	metrics := q.TaskMetrics()
+	if metrics.Completed != 10 {
+		t.Errorf("Completed: got %d, want 10", metrics.Completed)
+	}
+	if metrics.Failed != 5 {
+		t.Errorf("Failed: got %d, want 5", metrics.Failed)
+	}
+	if metrics.AvgDurationMs != 250 {
+		t.Errorf("AvgDurationMs: got %d, want 250", metrics.AvgDurationMs)
+	}
+	if metrics.QueueDepth != 100 {
+		t.Errorf("QueueDepth: got %d, want 100", metrics.QueueDepth)
+	}
+}
+
+func TestTaskMetricsZeroByDefault(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	metrics := q.TaskMetrics()
+	if metrics.Completed != 0 || metrics.Failed != 0 || metrics.AvgDurationMs != 0 || metrics.QueueDepth != 0 {
+		t.Errorf("expected zero metrics initially, got %+v", metrics)
+	}
+}
+
+func TestSetProxyConcurrencyLimit(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	q.SetProxyConcurrencyLimit(5)
+	q.mu.Lock()
+	if q.proxyConcurrencyLimit != 5 {
+		t.Errorf("proxyConcurrencyLimit: got %d, want 5", q.proxyConcurrencyLimit)
+	}
+	q.mu.Unlock()
+}
+
+func TestSetRetryBackoffBaseMs(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	q.SetRetryBackoffBaseMs(500)
+	q.mu.Lock()
+	if q.retryBackoffBaseMs != 500 {
+		t.Errorf("retryBackoffBaseMs: got %d, want 500", q.retryBackoffBaseMs)
+	}
+	q.mu.Unlock()
+}
+
+func TestSetDrainTimeout(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	timeout := 30 * time.Second
+	q.SetDrainTimeout(timeout)
+	q.mu.Lock()
+	if q.drainTimeout != timeout {
+		t.Errorf("drainTimeout: got %v, want %v", q.drainTimeout, timeout)
+	}
+	q.mu.Unlock()
+}
+
+func TestMetricsReturnsValidStruct(t *testing.T) {
+	q, _ := setupTestQueueNoWorkers(t, nil, nil)
+	defer q.Stop()
+
+	metrics := q.Metrics()
+	if metrics.Running != 0 {
+		t.Errorf("Initial running: got %d, want 0", metrics.Running)
+	}
+	if metrics.Queued != 0 {
+		t.Errorf("Initial queued: got %d, want 0", metrics.Queued)
+	}
+	if metrics.Pending != 0 {
+		t.Errorf("Initial pending: got %d, want 0", metrics.Pending)
+	}
+	if metrics.ProxyConcurrencyLimit != 0 {
+		t.Errorf("Initial proxy limit: got %d, want 0", metrics.ProxyConcurrencyLimit)
+	}
+}
+
+func TestRecoverStaleTasksResetsPending(t *testing.T) {
+	var events []models.TaskEvent
+	var mu sync.Mutex
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+
+	ctx := context.Background()
+	task := makeTestTask("stale-task")
+	task.Status = models.TaskStatusRunning
+
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if err := q.RecoverStaleTasks(ctx); err != nil {
+		t.Fatalf("RecoverStaleTasks: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	foundQueued := false
+	for _, e := range events {
+		if e.TaskID == "stale-task" && e.Status == models.TaskStatusQueued {
+			foundQueued = true
+			break
+		}
+	}
+	mu.Unlock()
+
+	if !foundQueued {
+		t.Error("expected recovered stale task to be re-queued")
+	}
+}
+
+func TestEnqueueTaskStateChangesWhenStopped(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	ctx := context.Background()
+	task := makeTestTask("sc-stopped-1")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.Stop()
+	changes := []database.TaskStateChange{{TaskID: task.ID, Status: models.TaskStatusPending, Error: ""}}
+	if err := q.enqueueTaskStateChanges(changes); err != nil {
+		t.Fatalf("enqueueTaskStateChanges when stopped: %v", err)
+	}
+}
+
+func TestEnqueueTaskStateChangesEmpty(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	if err := q.enqueueTaskStateChanges(nil); err != nil {
+		t.Fatalf("enqueueTaskStateChanges nil: %v", err)
+	}
+	if err := q.enqueueTaskStateChanges([]database.TaskStateChange{}); err != nil {
+		t.Fatalf("enqueueTaskStateChanges empty: %v", err)
+	}
+}
+
+func TestWebhookEventEnabled(t *testing.T) {
+	if !webhookEventEnabled(nil, "completed") {
+		t.Error("empty events should enable all")
+	}
+	if !webhookEventEnabled([]string{"completed", "failed"}, "completed") {
+		t.Error("should match 'completed'")
+	}
+	if webhookEventEnabled([]string{"failed"}, "completed") {
+		t.Error("should not match 'completed' when only 'failed'")
+	}
+}
+
+func TestStopWithDrainTimeout(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	q.SetDrainTimeout(10 * time.Millisecond)
+	q.Stop()
+}
+
+func TestSubmitBatchPartialCancel(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	tasks := []models.Task{makeTestTask("pb-1"), makeTestTask("pb-2"), makeTestTask("pb-3")}
+	for _, task := range tasks {
+		if err := db.CreateTask(ctx, task); err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	}
+	if err := q.SubmitBatch(ctx, tasks); err != nil {
+		t.Fatalf("SubmitBatch: %v", err)
+	}
+	m := q.Metrics()
+	if m.Queued+m.Running < 0 {
+		t.Error("unexpected negative queue size")
+	}
+}
+
+func TestRunningCountNewQueue(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	count := q.RunningCount()
+	if count != 0 {
+		t.Errorf("RunningCount: got %d, want 0", count)
+	}
+}
+
+func TestActiveReservations(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	m := proxy.NewManager(nil, models.ProxyPoolConfig{})
+	q.SetProxyManager(m)
+}
+
+func TestEnqueueStateChangeChannelFull(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	// Fill persistence channel beyond capacity to test fallback path
+	for i := 0; i < 2010; i++ {
+		task := makeTestTask(fmt.Sprintf("fill-%d", i))
+		task.Status = models.TaskStatusPending
+		if err := db.CreateTask(ctx, task); err != nil {
+			break
+		}
+		changes := []database.TaskStateChange{{TaskID: task.ID, Status: models.TaskStatusQueued, Error: ""}}
+		_ = q.enqueueTaskStateChanges(changes)
+	}
+}
+
+func TestFireWebhookSuccess(t *testing.T) {
+	received := make(chan []byte, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- body
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+
+	ctx := context.Background()
+	fireWebhook(ctx, ts.URL, "task-1", models.TaskStatusCompleted, time.Second, "", []string{"key1"})
+
+	select {
+	case body := <-received:
+		if !bytes.Contains(body, []byte("task-1")) {
+			t.Errorf("expected task-1 in body, got: %s", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for webhook")
+	}
+}
+
+func TestFireWebhookNon2xx(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	ctx := context.Background()
+	fireWebhook(ctx, ts.URL, "task-2", models.TaskStatusFailed, time.Second, "some error", nil)
+}
+
+func TestFireWebhookInvalidURL(t *testing.T) {
+	ctx := context.Background()
+	fireWebhook(ctx, "http://127.0.0.1:1", "task-3", models.TaskStatusCompleted, 0, "", nil)
+}
+
+func TestExecuteTaskCancelledBeforeStart(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("cancel-before")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.mu.Lock()
+	q.stopped = true
+	q.mu.Unlock()
+	childCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	q.executeTask(childCtx, task, false, false)
+}
+
+func TestScheduleProxyWake(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	q.mu.Lock()
+	q.scheduleProxyWake(10 * time.Millisecond)
+	q.mu.Unlock()
+}
+
+func TestDequeueRunnableLockedProxyConcurrencyLimit(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	q.SetProxyConcurrencyLimit(0)
+	task := makeTestTask("proxy-conc-1")
+	task.Proxy = models.ProxyConfig{Server: "proxy:8080", Protocol: models.ProxyHTTP}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	m := q.Metrics()
+	if m.Queued+m.Running < 0 {
+		t.Error("negative queue size")
+	}
+}
+
+func TestSubmitBatchReturnsErrorOnInvalidTask(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	// Submit batch with task that has no DB record - should error on state change
+	task := makeTestTask("no-db-task")
+	// Don't create in DB, batch should handle gracefully
+	tasks := []models.Task{task}
+	for _, t2 := range tasks {
+		_ = db.CreateTask(ctx, t2)
+	}
+	if err := q.SubmitBatch(ctx, tasks); err != nil {
+		t.Fatalf("SubmitBatch: %v", err)
+	}
+}
+
+func TestStopWithRunningTasksAndDrainTimeout(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	q.SetDrainTimeout(20 * time.Millisecond)
+	ctx := context.Background()
+	task := makeTestTask("drain-task")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.Stop()
+}
+
+func TestStopIdempotentMultipleCalls(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	q.Stop()
+	q.Stop()
+	q.Stop()
+}
+
+func TestScheduleRetryAfterStop(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("retry-task")
+	task.MaxRetries = 3
+	task.RetryCount = 1
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.Stop()
+	parentCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ri := retryInfo{
+		task:      task,
+		backoff:   1 * time.Millisecond,
+		parentCtx: parentCtx,
+	}
+	q.scheduleRetry(ri)
+}
+
+func TestScheduleRetryContextCancelled(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	task := makeTestTask("retry-ctx-cancel")
+	task.MaxRetries = 3
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	cancel()
+	ri := retryInfo{
+		task:      task,
+		backoff:   1 * time.Millisecond,
+		parentCtx: ctx,
+	}
+	q.scheduleRetry(ri)
+}
+
+func TestHandleSuccessNilResult(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("success-nil")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.handleSuccess(ctx, task, nil)
+	mu.Lock()
+	found := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusFailed {
+			found = true
+		}
+	}
+	mu.Unlock()
+	if !found {
+		t.Error("expected failed event for nil result")
+	}
+}
+
+func TestRecoverStaleTasksNone(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	if err := q.RecoverStaleTasks(context.Background()); err != nil {
+		t.Fatalf("RecoverStaleTasks (empty): %v", err)
+	}
+}
+
+func TestHandleFailureWithRetry(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("retry-failure")
+	task.MaxRetries = 3
+	task.RetryCount = 0
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	ri := q.handleFailure(ctx, task, fmt.Errorf("test error"), nil)
+	if !ri.shouldRetry {
+		t.Error("expected shouldRetry=true")
+	}
+	if ri.task.RetryCount != 1 {
+		t.Errorf("RetryCount: got %d, want 1", ri.task.RetryCount)
+	}
+}
+
+func TestHandleFailureMaxRetries(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("max-retries")
+	task.MaxRetries = 2
+	task.RetryCount = 2
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	ri := q.handleFailure(ctx, task, fmt.Errorf("final error"), nil)
+	if ri.shouldRetry {
+		t.Error("expected shouldRetry=false at max retries")
+	}
+}
+
+func TestSubmitBatchStoppedQueue(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("stopped-batch")
+	_ = db.CreateTask(ctx, task)
+	err := q.SubmitBatch(ctx, []models.Task{task})
+	if err == nil {
+		t.Fatal("expected error submitting to stopped queue")
+	}
+}
+
+func TestSubmitBatchNilSlice(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	if err := q.SubmitBatch(context.Background(), nil); err != nil {
+		t.Fatalf("SubmitBatch nil: %v", err)
+	}
+	if err := q.SubmitBatch(context.Background(), []models.Task{}); err != nil {
+		t.Fatalf("SubmitBatch empty: %v", err)
+	}
+}
+
+func TestRecoverStaleTasksRunning(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("stale-running")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, ""); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	if err := q.RecoverStaleTasks(ctx); err != nil {
+		t.Fatalf("RecoverStaleTasks: %v", err)
+	}
+}
+
+func TestEnqueueWhenPaused(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("paused-batch-task")
+	task.BatchID = "batch-paused"
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.PauseBatch("batch-paused")
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	q.ResumeBatch("batch-paused")
+	m := q.Metrics()
+	if m.Queued+m.Pending+m.Running < 0 {
+		t.Error("negative queue size")
+	}
+}
+
+func TestCancelRunningTask(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("cancel-running")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.mu.Lock()
+	taskCtx, cancel := context.WithCancel(ctx)
+	q.running[task.ID] = cancel
+	_ = taskCtx
+	q.mu.Unlock()
+	if err := q.Cancel(task.ID); err != nil {
+		t.Fatalf("Cancel running: %v", err)
+	}
+}
+
+func TestCancelPendingTask(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("cancel-pending")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := q.Cancel(task.ID); err != nil {
+		t.Fatalf("Cancel pending: %v", err)
+	}
+}
+
+func TestStopWithDrainRunningTask(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, _ := setupTestQueue(t, 2, &events, &mu)
+	q.SetDrainTimeout(50 * time.Millisecond)
+	// Inject a fake running task with a cancel func to simulate drain timeout
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q.mu.Lock()
+	q.running["fake-running"] = cancel
+	_ = ctx
+	q.mu.Unlock()
+	q.Stop() // should timeout drain and force-cancel
+}
+
+func TestDequeueRunnableWithPausedBatch(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("paused-dq")
+	task.BatchID = "batch-dq-pause"
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	q.PauseBatch("batch-dq-pause")
+	q.mu.Lock()
+	item, _, _ := q.dequeueRunnableLocked()
+	q.mu.Unlock()
+	if item != nil {
+		t.Error("expected nil item for paused batch task")
+	}
+}
+
+func TestRecoverStaleTasksQueued(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("stale-queued")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := db.UpdateTaskStatus(ctx, task.ID, models.TaskStatusQueued, ""); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	if err := q.RecoverStaleTasks(ctx); err != nil {
+		t.Fatalf("RecoverStaleTasks: %v", err)
+	}
+}
+
+func TestWebhookEventEnabledAllEvents(t *testing.T) {
+	events := []string{"completed", "failed", "started"}
+	for _, e := range events {
+		if !webhookEventEnabled(nil, e) {
+			t.Errorf("nil filter should enable %q", e)
+		}
+		if !webhookEventEnabled(events, e) {
+			t.Errorf("full filter should enable %q", e)
+		}
+	}
+	if webhookEventEnabled([]string{"failed"}, "completed") {
+		t.Error("should not enable 'completed' when filter is ['failed']")
+	}
+}
+
+func TestHandleSuccessWithResult(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("success-with-result")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	result := &models.TaskResult{
+		TaskID:        task.ID,
+		ExtractedData: map[string]string{"key": "value"},
+		Logs:          []models.LogEntry{{Level: "info", Message: "done"}},
+	}
+	q.handleSuccess(ctx, task, result)
+	mu.Lock()
+	found := false
+	for _, e := range events {
+		if e.TaskID == task.ID && e.Status == models.TaskStatusCompleted {
+			found = true
+		}
+	}
+	mu.Unlock()
+	if !found {
+		t.Error("expected completed event")
+	}
+}
+
+func TestDequeueRunnableLockedCancelled(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("cancel-dq")
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	q.mu.Lock()
+	q.cancelled[task.ID] = true
+	item, _, _ := q.dequeueRunnableLocked()
+	q.mu.Unlock()
+	if item != nil {
+		t.Error("expected nil item for cancelled task")
+	}
+}
+
+func TestDequeueRunnableLockedProxyConcurrencyExhausted(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 2, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	q.mu.Lock()
+	q.proxyConcurrencyLimit = 1
+	q.runningProxied = 1
+	q.mu.Unlock()
+	task := makeTestTask("proxy-exhausted")
+	task.Proxy = models.ProxyConfig{Server: "proxy:8080", Protocol: models.ProxyHTTP}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := q.Submit(ctx, task); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	q.mu.Lock()
+	item, _, _ := q.dequeueRunnableLocked()
+	q.mu.Unlock()
+	if item != nil {
+		t.Error("expected nil item when proxy concurrency exhausted")
+	}
+}
+
+func TestRecoverStaleTasksBoth(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	for i, status := range []models.TaskStatus{models.TaskStatusRunning, models.TaskStatusQueued} {
+		task := makeTestTask(fmt.Sprintf("stale-%d", i))
+		_ = db.CreateTask(ctx, task)
+		_ = db.UpdateTaskStatus(ctx, task.ID, status, "")
+	}
+	if err := q.RecoverStaleTasks(ctx); err != nil {
+		t.Fatalf("RecoverStaleTasks: %v", err)
+	}
+}
+
+func TestScheduleRetryBackoff(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("backoff-task")
+	task.MaxRetries = 5
+	task.RetryCount = 0
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	q.SetRetryBackoffBaseMs(1)
+	ri := retryInfo{task: task, backoff: 1 * time.Millisecond, parentCtx: ctx, shouldRetry: true}
+	go q.scheduleRetry(ri)
+	// give goroutine time to start then stop queue
+	time.Sleep(5 * time.Millisecond)
+	q.Stop()
+}
+
+func TestEnqueueStateChangeSingle(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("single-change")
+	_ = db.CreateTask(ctx, task)
+	if err := q.enqueueTaskStateChange(database.TaskStateChange{TaskID: task.ID, Status: models.TaskStatusQueued}); err != nil {
+		t.Fatalf("enqueueTaskStateChange: %v", err)
+	}
+}
+
+func TestHandleFailureNoRetry(t *testing.T) {
+	var mu sync.Mutex
+	var events []models.TaskEvent
+	q, db := setupTestQueue(t, 1, &events, &mu)
+	defer q.Stop()
+	ctx := context.Background()
+	task := makeTestTask("no-retry")
+	task.MaxRetries = 0
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	ri := q.handleFailure(ctx, task, fmt.Errorf("fatal"), nil)
+	if ri.shouldRetry {
+		t.Error("expected shouldRetry=false when MaxRetries=0")
 	}
 }

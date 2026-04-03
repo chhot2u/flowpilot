@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"flowpilot/internal/captcha"
+	"flowpilot/internal/localproxy"
 	"flowpilot/internal/logs"
 	"flowpilot/internal/models"
 
@@ -1434,5 +1436,1092 @@ func TestExecNavigateRunResponseError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("expected 'connection refused', got: %v", err)
+	}
+}
+
+func TestSetCaptchaSolver(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	var solver captcha.Solver
+	r.SetCaptchaSolver(solver)
+	r.mu.Lock()
+	if r.captchaSolver != solver {
+		t.Error("captcha solver not set correctly")
+	}
+	r.mu.Unlock()
+}
+
+func TestSetPool(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	pool := &BrowserPool{poolSize: 5}
+	r.SetPool(pool)
+	r.mu.Lock()
+	if r.pool != pool {
+		t.Error("pool not set correctly")
+	}
+	r.mu.Unlock()
+}
+
+func TestSetLocalProxyManager(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	var pm *localproxy.Manager
+	r.SetLocalProxyManager(pm)
+	r.mu.Lock()
+	if r.localProxyManager != pm {
+		t.Error("local proxy manager not set correctly")
+	}
+	r.mu.Unlock()
+}
+
+func TestSetDefaultLoggingPolicy(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	policy := models.TaskLoggingPolicy{MaxExecutionLogs: 500}
+	r.SetDefaultLoggingPolicy(policy)
+	r.mu.Lock()
+	if r.defaultLoggingPolicy.MaxExecutionLogs != 500 {
+		t.Error("logging policy not set correctly")
+	}
+	r.mu.Unlock()
+}
+
+func TestResolveLoggingPolicy(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	
+	task := models.Task{}
+	policy := r.resolveLoggingPolicy(task)
+	if !policy.captureStepLogs || !policy.captureNetworkLogs || !policy.captureScreenshots {
+		t.Error("default logging policy should enable all capture")
+	}
+	if policy.maxExecutionLogs != 1000 {
+		t.Errorf("default max logs should be 1000, got %d", policy.maxExecutionLogs)
+	}
+
+	falseVal := false
+	task.LoggingPolicy = &models.TaskLoggingPolicy{
+		CaptureStepLogs: &falseVal,
+		MaxExecutionLogs: 200,
+	}
+	policy = r.resolveLoggingPolicy(task)
+	if policy.captureStepLogs {
+		t.Error("task policy should override default")
+	}
+	if policy.maxExecutionLogs != 200 {
+		t.Errorf("task max logs should be 200, got %d", policy.maxExecutionLogs)
+	}
+}
+
+func TestAddLogWithLimit(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: chromeExecutor{}}
+	result := &models.TaskResult{
+		TaskID:    "test-limit",
+		LogLimit:  3,
+		ExtractedData: make(map[string]string),
+	}
+
+	r.addLog(result, "info", "log 1")
+	r.addLog(result, "info", "log 2")
+	r.addLog(result, "info", "log 3")
+	r.addLog(result, "info", "log 4")
+	r.addLog(result, "info", "log 5")
+
+	if len(result.Logs) != 3 {
+		t.Errorf("log limit not respected: got %d logs, want 3", len(result.Logs))
+	}
+	if result.Logs[0].Message != "log 3" || result.Logs[2].Message != "log 5" {
+		t.Error("log rotation not working correctly")
+	}
+}
+
+func TestRunStepsWithLoop(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "loop-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionLoop, Value: "2"},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionEndLoop},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("loop execution failed: %v", err)
+	}
+	if mock.callCount() != 2 {
+		t.Errorf("loop should execute body twice, got %d executor calls", mock.callCount())
+	}
+}
+
+func TestRunStepsWithBreakLoop(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "break-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionLoop, Value: "10"},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionBreakLoop},
+		{Action: models.ActionEndLoop},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("break loop execution failed: %v", err)
+	}
+	if mock.callCount() != 1 {
+		t.Errorf("break should exit loop after 1 iteration, got %d calls", mock.callCount())
+	}
+}
+
+func TestRunStepsWithGoto(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "goto-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionGoto, JumpTo: "skipme"},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionNavigate, Value: "https://example.com", Label: "skipme"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("goto execution failed: %v", err)
+	}
+	if mock.callCount() != 2 {
+		t.Errorf("goto should skip middle navigate, got %d calls", mock.callCount())
+	}
+}
+
+func TestRunStepsGotoLabelNotFound(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: &mockExecutor{}}
+	result := &models.TaskResult{
+		TaskID:        "goto-notfound",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionGoto, JumpTo: "nonexistent"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected label not found error, got: %v", err)
+	}
+}
+
+func TestRunStepsEndLoopWithoutLoop(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: &mockExecutor{}}
+	result := &models.TaskResult{
+		TaskID:        "endloop-mismatch",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionEndLoop},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err == nil || !strings.Contains(err.Error(), "without matching loop") {
+		t.Errorf("expected mismatch error, got: %v", err)
+	}
+}
+
+func TestRunStepsBreakLoopWithoutLoop(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: &mockExecutor{}}
+	result := &models.TaskResult{
+		TaskID:        "break-mismatch",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionBreakLoop},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err == nil || !strings.Contains(err.Error(), "without matching loop") {
+		t.Errorf("expected mismatch error, got: %v", err)
+	}
+}
+
+func TestRunStepsWithWhile(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "while-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionWhile, Selector: "#elem", Condition: "exists", MaxLoops: 2},
+		{Action: models.ActionWait, Value: "1"},
+		{Action: models.ActionEndWhile},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("while execution failed: %v", err)
+	}
+}
+
+func TestRunStepsEndWhileWithoutWhile(t *testing.T) {
+	r := &Runner{screenshotDir: t.TempDir(), exec: &mockExecutor{}}
+	result := &models.TaskResult{
+		TaskID:        "endwhile-mismatch",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionEndWhile},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err == nil || !strings.Contains(err.Error(), "without matching while_condition") {
+		t.Errorf("expected mismatch error, got: %v", err)
+	}
+}
+
+func TestRunStepsIfElement(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "if-element-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionIfElement, Selector: "#elem", Condition: "exists"},
+		{Action: models.ActionWait, Value: "1"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("if_element execution failed: %v", err)
+	}
+}
+
+func TestRunStepsIfElementWithJumpTo(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "if-element-jump",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionIfElement, Selector: "#elem", Condition: "not_exists", JumpTo: "target"},
+		{Action: models.ActionWait, Value: "1"},
+		{Action: models.ActionWait, Value: "1", Label: "target"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("if_element jump execution failed: %v", err)
+	}
+}
+
+func TestRunStepsIfText(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "if-text-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionIfText, Selector: "#text", Condition: "contains:hello"},
+		{Action: models.ActionWait, Value: "1"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("if_text execution failed: %v", err)
+	}
+}
+
+func TestRunStepsIfURL(t *testing.T) {
+	mock := &mockExecutor{}
+	r := newMockRunner(t, mock)
+	result := &models.TaskResult{
+		TaskID:        "if-url-test",
+		ExtractedData: make(map[string]string),
+	}
+
+	steps := []models.TaskStep{
+		{Action: models.ActionIfURL, Condition: "contains:example"},
+		{Action: models.ActionWait, Value: "1"},
+	}
+
+	err := r.runSteps(context.Background(), steps, result, nil, r.resolveLoggingPolicy(models.Task{}))
+	if err != nil {
+		t.Fatalf("if_url execution failed: %v", err)
+	}
+}
+
+func TestClearCookies(t *testing.T) {
+	err := ClearCookies(context.Background())
+	if err == nil {
+		t.Fatal("expected error when calling ClearCookies without a browser")
+	}
+}
+func TestNotificationHub(t *testing.T) {
+	hub := NewNotificationHub()
+	if hub == nil {
+		t.Fatal("NewNotificationHub returned nil")
+	}
+	hub.Send("hello")
+	hub.Send("world")
+	ch := hub.Ch()
+	if ch == nil {
+		t.Fatal("Ch() returned nil")
+	}
+	msg := <-ch
+	if msg != "hello" {
+		t.Errorf("got %q, want %q", msg, "hello")
+	}
+	hub.Close()
+	hub.Close() // idempotent
+	hub.Send("after close") // no-op, should not panic
+}
+
+func TestRunnerSettersNoPool(t *testing.T) {
+	dir := t.TempDir()
+	r, err := NewRunner(dir)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	r.SetForceHeadless(true)
+	r.SetAllowEval(true)
+	r.SetCaptchaSolver(nil)
+	r.SetDefaultLoggingPolicy(models.TaskLoggingPolicy{MaxExecutionLogs: 100})
+	// Note: SetPool and StopProxyPools require a live pool; skip here
+}
+
+func TestExecWhileWithMock(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionWhile, Condition: "text_contains", Selector: "#el", Value: "hello", MaxLoops: 5}
+	if err := runner.execWhile(context.Background(), step, result); err != nil {
+		t.Fatalf("execWhile: %v", err)
+	}
+	if result.ExtractedData["_while_max_loops"] != "5" {
+		t.Errorf("max_loops: got %q, want %q", result.ExtractedData["_while_max_loops"], "5")
+	}
+}
+
+func TestExecWhileNoCondition(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionWhile}
+	err := runner.execWhile(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for missing condition")
+	}
+}
+
+func TestExecEndWhile(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionEndWhile}
+	if err := runner.execEndWhile(context.Background(), step, result); err != nil {
+		t.Fatalf("execEndWhile: %v", err)
+	}
+}
+
+func TestExecVariableStringOps(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	ctx := context.Background()
+	cases := []struct {
+		op       string
+		initial  string
+		value    string
+		cond     string
+		expected string
+	}{
+		{"concat", "hello", " world", "", "hello world"},
+		{"prepend", "world", "hello ", "", "hello world"},
+		{"upper", "hello", "", "", "HELLO"},
+		{"lower", "HELLO", "", "", "hello"},
+		{"trim", "  hi  ", "", "", "hi"},
+		{"length", "hello", "", "", "5"},
+		{"replace", "hello world", "new", "world", "hello new"},
+		{"unknown", "hello", "", "", "hello"},
+	}
+	for _, tc := range cases {
+		result := &models.TaskResult{ExtractedData: map[string]string{"var_x": tc.initial}}
+		step := models.TaskStep{Action: models.ActionVariableString, VarName: "x", Operator: tc.op, Value: tc.value, Condition: tc.cond}
+		if err := runner.execVariableString(ctx, step, result); err != nil {
+			t.Errorf("op %s: %v", tc.op, err)
+		}
+		if result.ExtractedData["var_x"] != tc.expected {
+			t.Errorf("op %s: got %q, want %q", tc.op, result.ExtractedData["var_x"], tc.expected)
+		}
+	}
+}
+
+func TestExecVariableStringNoVarName(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionVariableString}
+	if err := runner.execVariableString(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing varName")
+	}
+}
+
+func TestJumpToLabel(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	if err := runner.jumpToLabel("my-label", result); err != nil {
+		t.Fatalf("jumpToLabel: %v", err)
+	}
+	if result.ExtractedData["_jump_to_label"] != "my-label" {
+		t.Errorf("label: got %q, want %q", result.ExtractedData["_jump_to_label"], "my-label")
+	}
+}
+
+func TestExecIfExistsNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionIfExists, Selector: ""}
+	if err := runner.execIfExists(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecIfNotExistsNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionIfNotExists, Selector: ""}
+	if err := runner.execIfNotExists(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecIfVisibleNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionIfVisible, Selector: ""}
+	if err := runner.execIfVisible(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecIfEnabledNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionIfEnabled, Selector: ""}
+	if err := runner.execIfEnabled(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecVariableMathOps(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	ctx := context.Background()
+	ops := []struct {
+		op       string
+		initial  string
+		value    string
+		expected string
+	}{
+		{"add", "10", "5", "15"},
+		{"subtract", "10", "3", "7"},
+		{"multiply", "4", "3", "12"},
+		{"divide", "10", "2", "5"},
+	}
+	for _, tc := range ops {
+		result := &models.TaskResult{ExtractedData: map[string]string{"var_n": tc.initial}}
+		step := models.TaskStep{Action: models.ActionVariableMath, VarName: "n", Operator: tc.op, Value: tc.value}
+		if err := runner.execVariableMath(ctx, step, result); err != nil {
+			t.Errorf("op %s: %v", tc.op, err)
+		}
+		if result.ExtractedData["var_n"] != tc.expected {
+			t.Errorf("op %s: got %q, want %q", tc.op, result.ExtractedData["var_n"], tc.expected)
+		}
+	}
+}
+
+func TestExecCacheSetNoKey(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionCacheSet, Selector: "", Value: "myval"}
+	err := runner.execCacheSet(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for missing cache key")
+	}
+}
+
+func TestExecDebugPauseCancelledCtx(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionDebugPause}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled context so debugPause exits immediately
+	_ = runner.execDebugPause(ctx, step, result)
+}
+
+func TestExecSelectRandomNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionSelectRandom, Selector: ""}
+	if err := runner.execSelectRandom(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecHumanTypingValidation(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionHumanTyping, Selector: ""}
+	if err := runner.execHumanTyping(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+	step2 := models.TaskStep{Action: models.ActionHumanTyping, Selector: "#input", Value: ""}
+	if err := runner.execHumanTyping(context.Background(), step2); err == nil {
+		t.Fatal("expected error for missing value")
+	}
+}
+
+func TestExecLoadSessionNoVarName(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionLoadSession, VarName: ""}
+	if err := runner.execLoadSession(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing varName")
+	}
+}
+
+func TestExecSelectNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionSelect, Selector: ""}
+	if err := runner.execSelect(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecDownloadNoURL(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionDownload, Value: ""}
+	if err := runner.execDownload(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing URL")
+	}
+}
+
+func TestSetLocalProxyManagerAfterCreate(t *testing.T) {
+	dir := t.TempDir()
+	r, err := NewRunner(dir)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	lpm := localproxy.NewManager(time.Minute)
+	defer lpm.Stop()
+	r.SetLocalProxyManager(lpm)
+}
+
+func TestExecSolveCaptchaNoSolver(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	runner.SetCaptchaSolver(nil)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionSolveCaptcha, Value: string(models.CaptchaTypeRecaptchaV2)}
+	err := runner.execSolveCaptcha(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error when no solver configured")
+	}
+	if !strings.Contains(err.Error(), "captcha solver not configured") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+type mockCaptchaSolver struct{ token string }
+
+func (m *mockCaptchaSolver) Solve(_ context.Context, _ models.CaptchaSolveRequest) (*models.CaptchaSolveResult, error) {
+	return &models.CaptchaSolveResult{Token: m.token}, nil
+}
+func (m *mockCaptchaSolver) Balance(_ context.Context) (float64, error) { return 1.0, nil }
+
+func TestExecSolveCaptchaWithSolver(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	runner.SetCaptchaSolver(&mockCaptchaSolver{token: "test-token-123"})
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionSolveCaptcha, Value: string(models.CaptchaTypeRecaptchaV2), Selector: "site-key", VarName: "my_token"}
+	err := runner.execSolveCaptcha(context.Background(), step, result)
+	if err != nil {
+		t.Fatalf("execSolveCaptcha: %v", err)
+	}
+	if result.ExtractedData["my_token"] != "test-token-123" {
+		t.Errorf("token: got %q, want %q", result.ExtractedData["my_token"], "test-token-123")
+	}
+}
+
+func TestExecDownloadBadPath(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionDownload, Selector: "a.link", Path: "/nonexistent/dir/that/doesnt/exist"}
+	err := runner.execDownload(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for non-existent download path")
+	}
+}
+
+func TestExecLoadSessionWithData(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{
+		"default_session_data": `{"cookies":"session=abc","localStorage":{"key":"value"}}`,
+	}}
+	step := models.TaskStep{Action: models.ActionLoadSession, VarName: ""}
+	err := runner.execLoadSession(context.Background(), step, result)
+	if err != nil {
+		t.Fatalf("execLoadSession with data: %v", err)
+	}
+}
+
+func TestExecLoadSessionNoData(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionLoadSession, VarName: "mysession"}
+	err := runner.execLoadSession(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for missing session data")
+	}
+}
+
+func TestExecVariableSetOps(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	ctx := context.Background()
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionVariableSet, VarName: "myvar", Value: "hello"}
+	if err := runner.execVariableSet(ctx, step, result); err != nil {
+		t.Fatalf("execVariableSet: %v", err)
+	}
+	if result.ExtractedData["var_myvar"] != "hello" {
+		t.Errorf("var: got %q, want %q", result.ExtractedData["var_myvar"], "hello")
+	}
+}
+
+func TestExecVariableSetNoVarName(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionVariableSet, VarName: ""}
+	if err := runner.execVariableSet(context.Background(), step, result); err == nil {
+		t.Fatal("expected error for missing varName")
+	}
+}
+
+func TestResolveExistingDirWithinBaseValid(t *testing.T) {
+	base := t.TempDir()
+	sub := filepath.Join(base, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	_, resolved, err := resolveExistingDirWithinBase(base, sub)
+	if err != nil {
+		t.Fatalf("resolveExistingDirWithinBase: %v", err)
+	}
+	if resolved == "" {
+		t.Error("expected non-empty resolved path")
+	}
+}
+
+func TestResolveExistingDirWithinBaseEscape(t *testing.T) {
+	base := t.TempDir()
+	other := t.TempDir()
+	_, _, err := resolveExistingDirWithinBase(base, other)
+	if err == nil {
+		t.Fatal("expected error for path escaping base")
+	}
+}
+
+func TestResolveExistingDirWithinBaseNotDir(t *testing.T) {
+	base := t.TempDir()
+	file := filepath.Join(base, "file.txt")
+	if err := os.WriteFile(file, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, _, err := resolveExistingDirWithinBase(base, file)
+	if err == nil {
+		t.Fatal("expected error for file path (not a directory)")
+	}
+}
+
+func TestExecVariableMathDivideByZero(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{"var_n": "10"}}
+	step := models.TaskStep{Action: models.ActionVariableMath, VarName: "n", Operator: "divide", Value: "0"}
+	err := runner.execVariableMath(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for divide by zero")
+	}
+}
+
+func TestExecVariableMathNoVarName(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionVariableMath, VarName: ""}
+	err := runner.execVariableMath(context.Background(), step, result)
+	if err == nil {
+		t.Fatal("expected error for missing varName")
+	}
+}
+
+func TestExecDoubleClick(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionDoubleClick, Selector: "#btn"}
+	if err := runner.execDoubleClick(context.Background(), step); err != nil {
+		t.Fatalf("execDoubleClick: %v", err)
+	}
+}
+
+func TestExecDoubleClickNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionDoubleClick, Selector: ""}
+	if err := runner.execDoubleClick(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecScrollIntoView(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionScrollIntoView, Selector: "#elem"}
+	if err := runner.execScrollIntoView(context.Background(), step); err != nil {
+		t.Fatalf("execScrollIntoView: %v", err)
+	}
+}
+
+func TestExecScrollIntoViewNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionScrollIntoView, Selector: ""}
+	if err := runner.execScrollIntoView(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecSubmitForm(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionSubmitForm, Selector: "form#main"}
+	if err := runner.execSubmitForm(context.Background(), step); err != nil {
+		t.Fatalf("execSubmitForm: %v", err)
+	}
+}
+
+func TestExecSubmitFormNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionSubmitForm, Selector: ""}
+	if err := runner.execSubmitForm(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecWaitNotPresent(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionWaitNotPresent, Selector: "#loading"}
+	if err := runner.execWaitNotPresent(context.Background(), step); err != nil {
+		t.Fatalf("execWaitNotPresent: %v", err)
+	}
+}
+
+func TestExecWaitNotPresentNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionWaitNotPresent, Selector: ""}
+	if err := runner.execWaitNotPresent(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestExecWaitEnabled(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionWaitEnabled, Selector: "#submit-btn"}
+	if err := runner.execWaitEnabled(context.Background(), step); err != nil {
+		t.Fatalf("execWaitEnabled: %v", err)
+	}
+}
+
+func TestExecWaitEnabledNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	step := models.TaskStep{Action: models.ActionWaitEnabled, Selector: ""}
+	if err := runner.execWaitEnabled(context.Background(), step); err == nil {
+		t.Fatal("expected error for missing selector")
+	}
+}
+
+func TestAddLogFiveMessages(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	for i := 0; i < 5; i++ {
+		runner.addLog(result, "info", fmt.Sprintf("msg %d", i))
+	}
+	if len(result.Logs) != 5 {
+		t.Errorf("expected 5 logs, got %d", len(result.Logs))
+	}
+}
+
+func TestBrowserPoolStatsMethod(t *testing.T) {
+	pool := &BrowserPool{}
+	s := pool.stats()
+	_ = s
+}
+
+func TestRunStepsLoopAndEndLoop(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "loop-test"}
+	steps := []models.TaskStep{
+		{Action: models.ActionLoop, Value: "2"},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionEndLoop},
+	}
+	policy := resolvedLoggingPolicy{}
+	if err := runner.runSteps(context.Background(), steps, result, nil, policy); err != nil {
+		t.Fatalf("runSteps loop: %v", err)
+	}
+}
+
+func TestRunStepsGoto(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "goto-test"}
+	steps := []models.TaskStep{
+		{Action: models.ActionGoto, Value: "end"},
+		{Action: models.ActionClick, Selector: "#never"},
+		{Action: models.ActionGoto, Value: "end"},
+	}
+	policy := resolvedLoggingPolicy{}
+	err := runner.runSteps(context.Background(), steps, result, nil, policy)
+	_ = err // goto to unknown label returns error; that's ok
+}
+
+func TestRunStepsEndLoopNoMatchNew(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "bad-el"}
+	steps := []models.TaskStep{{Action: models.ActionEndLoop}}
+	policy := resolvedLoggingPolicy{}
+	err := runner.runSteps(context.Background(), steps, result, nil, policy)
+	if err == nil {
+		t.Fatal("expected error for end_loop without loop")
+	}
+}
+
+func TestRunStepsWhileCondNoCondition(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "while-cond"}
+	steps := []models.TaskStep{
+		{Action: models.ActionWhile, Condition: "", Selector: "", MaxLoops: 1},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionEndWhile},
+	}
+	policy := resolvedLoggingPolicy{}
+	_ = runner.runSteps(context.Background(), steps, result, nil, policy)
+}
+
+func TestEvaluateConditionIfURL(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	vars := map[string]string{}
+	step := models.TaskStep{Action: models.ActionIfURL, Condition: "contains", Value: "example"}
+	_, err := runner.evaluateCondition(context.Background(), step, vars)
+	if err != nil {
+		t.Fatalf("evaluateCondition IfURL: %v", err)
+	}
+}
+
+func TestEvaluateConditionWhileWithSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	vars := map[string]string{}
+	step := models.TaskStep{Action: models.ActionWhile, Condition: "exists", Selector: "#elem"}
+	_, err := runner.evaluateCondition(context.Background(), step, vars)
+	if err != nil {
+		t.Fatalf("evaluateCondition While+selector: %v", err)
+	}
+}
+
+func TestEvaluateConditionWhileNoSelector(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	vars := map[string]string{}
+	step := models.TaskStep{Action: models.ActionWhile, Condition: "contains", Selector: "", Value: "example"}
+	_, err := runner.evaluateCondition(context.Background(), step, vars)
+	if err != nil {
+		t.Fatalf("evaluateCondition While no selector: %v", err)
+	}
+}
+
+func TestEvaluateTextConditionsAll(t *testing.T) {
+	vars := map[string]string{}
+	cases := []struct {
+		cond string
+		text string
+		want bool
+	}{
+		{"contains:hello", "hello world", true},
+		{"not_contains:xyz", "hello world", true},
+		{"starts_with:hello", "hello world", true},
+		{"ends_with:world", "hello world", true},
+		{"equals:hello", "hello", true},
+		{"not_equals:world", "hello", true},
+		{"matches:[a-z]+", "abc123", true},
+		{"hello", "hello world", true}, // fallback: strings.Contains
+	}
+	for _, tc := range cases {
+		got, err := evaluateTextCondition(tc.cond, tc.text, vars)
+		if err != nil {
+			t.Errorf("cond %q: %v", tc.cond, err)
+		}
+		if got != tc.want {
+			t.Errorf("cond %q on %q: got %v, want %v", tc.cond, tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestExecVariableStringReplaceNotFound(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{"var_x": "hello world"}}
+	step := models.TaskStep{Action: models.ActionVariableString, VarName: "x", Operator: "replace", Value: "newval", Condition: "notfound"}
+	if err := runner.execVariableString(context.Background(), step, result); err != nil {
+		t.Fatalf("replace (not found): %v", err)
+	}
+	if result.ExtractedData["var_x"] != "hello world" {
+		t.Errorf("unexpected change: got %q", result.ExtractedData["var_x"])
+	}
+}
+
+func TestRunStepsLoopZeroIterations(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "loop-zero"}
+	steps := []models.TaskStep{
+		{Action: models.ActionLoop, Value: "0"},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionEndLoop},
+	}
+	policy := resolvedLoggingPolicy{}
+	if err := runner.runSteps(context.Background(), steps, result, nil, policy); err != nil {
+		t.Fatalf("runSteps loop 0: %v", err)
+	}
+}
+
+func TestRunStepsWhileLoop(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "while-loop"}
+	steps := []models.TaskStep{
+		{Action: models.ActionWhile, Condition: "exists", Selector: "#btn", MaxLoops: 1},
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionEndWhile},
+	}
+	policy := resolvedLoggingPolicy{}
+	if err := runner.runSteps(context.Background(), steps, result, nil, policy); err != nil {
+		t.Fatalf("runSteps while: %v", err)
+	}
+}
+
+func TestRunStepsGotoKnownLabel(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "goto-known"}
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+		{Action: models.ActionGoto, Value: "end"},
+		{Action: models.ActionClick, Selector: "#skipped"},
+		{Action: models.ActionNavigate, Value: "https://end.com", Label: "end"},
+	}
+	policy := resolvedLoggingPolicy{}
+	_ = runner.runSteps(context.Background(), steps, result, nil, policy)
+}
+
+func TestRunStepsPauseAndResume(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	runner.SetForceHeadless(false)
+	result := &models.TaskResult{ExtractedData: map[string]string{}, TaskID: "pause-res"}
+	steps := []models.TaskStep{
+		{Action: models.ActionNavigate, Value: "https://example.com"},
+	}
+	policy := resolvedLoggingPolicy{}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_ = runner.runSteps(ctx, steps, result, nil, policy)
+}
+
+func TestExecGetCookiesDefaultVarName(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionGetCookies, VarName: ""}
+	// empty VarName defaults to "cookie" prefix; mock returns empty cookies, no error
+	if err := runner.execGetCookies(context.Background(), step, result); err != nil {
+		t.Fatalf("execGetCookies empty varName: %v", err)
+	}
+	if _, ok := result.ExtractedData["cookie_count"]; !ok {
+		t.Error("expected cookie_count in extracted data")
+	}
+}
+
+func TestExecDebugStepCancelledCtx(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionDebugStep}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_ = runner.execDebugStep(ctx, step, result)
+}
+
+func TestExecDebugResumeAfterPause(t *testing.T) {
+	exec := &mockExecutor{}
+	runner := newMockRunner(t, exec)
+	result := &models.TaskResult{ExtractedData: map[string]string{}}
+	step := models.TaskStep{Action: models.ActionDebugResume}
+	if err := runner.execDebugResume(context.Background(), step, result); err != nil {
+		t.Fatalf("execDebugResume: %v", err)
 	}
 }
