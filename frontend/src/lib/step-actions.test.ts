@@ -56,4 +56,36 @@ describe('step-actions', () => {
     expect(getStepActionOptions('legacy_action', ['navigate', 'click'])).toEqual(['navigate', 'click', 'legacy_action']);
     expect(getStepActionOptions('click', ['navigate', 'click'])).toEqual(['navigate', 'click']);
   });
+
+  it('falls back when GetSupportedStepActions returns empty array', async () => {
+    window.go = {
+      main: {
+        App: {
+          GetSupportedStepActions: async () => [],
+        },
+      },
+    };
+
+    const state = await ensureStepActionStateLoaded();
+    expect(state.usingFallback).toBe(true);
+    expect(state.warning).not.toBe('');
+    expect(state.actions).toEqual([...supportedStepActions]);
+  });
+
+  it('falls back when GetSupportedStepActions throws an error', async () => {
+    window.go = {
+      main: {
+        App: {
+          GetSupportedStepActions: async () => {
+            throw new Error('API failure');
+          },
+        },
+      },
+    };
+
+    const state = await ensureStepActionStateLoaded();
+    expect(state.usingFallback).toBe(true);
+    expect(state.warning).not.toBe('');
+    expect(state.actions).toEqual([...supportedStepActions]);
+  });
 });

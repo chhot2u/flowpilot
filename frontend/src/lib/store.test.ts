@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { tasks, proxies, selectedTaskId, statusFilter, tagFilter, activeTab, selectedTask, filteredTasks, taskStats, allTags, updateTaskInStore } from './store';
+import { tasks, proxies, selectedTaskId, statusFilter, tagFilter, activeTab, selectedTask, filteredTasks, taskStats, allTags, updateTaskInStore, replaceTaskInStore, removeTaskFromStore } from './store';
 import type { Task, TaskEvent } from './types';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -281,6 +281,15 @@ describe('updateTaskInStore edge cases', () => {
     updateTaskInStore({ taskId: '1', status: 'running' });
     expect(get(tasks)).toHaveLength(0);
   });
+
+  it('does not update when status and error are unchanged', () => {
+    const original = [makeTask({ id: '1', status: 'running', error: 'old error' })];
+    tasks.set(original);
+    
+    updateTaskInStore({ taskId: '1', status: 'running', error: 'old error' });
+    
+    expect(get(tasks)).toBe(original);
+  });
 });
 
 describe('filteredTasks ordering', () => {
@@ -325,5 +334,70 @@ describe('taskStats edge cases', () => {
     expect(stats.failed).toBe(1);
     expect(stats.cancelled).toBe(1);
     expect(stats.retrying).toBe(1);
+  });
+});
+
+describe('replaceTaskInStore', () => {
+  it('replaces existing task with updated version', () => {
+    tasks.set([makeTask({ id: '1', name: 'Original', status: 'pending' })]);
+    
+    const updated = makeTask({ id: '1', name: 'Updated', status: 'running' });
+    replaceTaskInStore(updated);
+    
+    const list = get(tasks);
+    expect(list[0].name).toBe('Updated');
+    expect(list[0].status).toBe('running');
+  });
+
+  it('does nothing when task does not exist', () => {
+    const original = [makeTask({ id: '1' })];
+    tasks.set(original);
+    
+    replaceTaskInStore(makeTask({ id: 'nonexistent' }));
+    
+    expect(get(tasks)).toEqual(original);
+  });
+
+  it('preserves other tasks in the list', () => {
+    tasks.set([
+      makeTask({ id: '1', name: 'First' }),
+      makeTask({ id: '2', name: 'Second' }),
+    ]);
+    
+    replaceTaskInStore(makeTask({ id: '1', name: 'First Updated' }));
+    
+    const list = get(tasks);
+    expect(list[0].name).toBe('First Updated');
+    expect(list[1].name).toBe('Second');
+  });
+});
+
+describe('removeTaskFromStore', () => {
+  it('removes existing task from store', () => {
+    tasks.set([
+      makeTask({ id: '1' }),
+      makeTask({ id: '2' }),
+    ]);
+    
+    removeTaskFromStore('1');
+    
+    const list = get(tasks);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe('2');
+  });
+
+  it('does nothing when task does not exist', () => {
+    const original = [makeTask({ id: '1' })];
+    tasks.set(original);
+    
+    removeTaskFromStore('nonexistent');
+    
+    expect(get(tasks)).toEqual(original);
+  });
+
+  it('handles empty task list', () => {
+    tasks.set([]);
+    removeTaskFromStore('1');
+    expect(get(tasks)).toHaveLength(0);
   });
 });
