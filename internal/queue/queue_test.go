@@ -150,18 +150,22 @@ func TestExecuteTask(t *testing.T) {
 		q.executeTask(context.Background(), task, false, false)
 	})
 
-	t.Run("SuccessFinalizationPath", func(t *testing.T) {
+	t.Run("SuccessFinalizationPathWithDB", func(t *testing.T) {
 		q, db := setupTestQueueNoWorkers(t, nil, nil)
 		t.Cleanup(q.Stop)
 
-		task := makeTestTask("success-test")
+		task := makeTestTask("success-test-db")
+		// Insert task into DB first so executeTask can persist status updates
+		if err := db.CreateTask(context.Background(), task); err != nil {
+			t.Fatalf("create task: %v", err)
+		}
 
 		q.executeTask(context.Background(), task, false, false)
 
 		// Verify task was marked completed or failed (browser may not run in test env)
 		updatedTask, err := db.GetTask(context.Background(), task.ID)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("get task %s: %v", task.ID, err)
 		}
 		t.Logf("task completed with status: %s", updatedTask.Status)
 	})

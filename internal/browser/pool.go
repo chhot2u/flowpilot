@@ -20,6 +20,7 @@ const (
 type pooledBrowser struct {
 	allocCtx    context.Context
 	allocCancel context.CancelFunc
+	browserCtx  context.Context    // root browser context; parent for new tab contexts
 	lastUsed    time.Time
 	inUse       int
 	maxTabs     int
@@ -193,9 +194,12 @@ func (p *BrowserPool) signalAvailabilityLocked() {
 	}
 }
 
-func (p *BrowserPool) newTabContext(b *pooledBrowser, allocCtx context.Context) (context.Context, func(), error) {
-	tabCtx, tabCancel := chromedp.NewContext(allocCtx,
-		chromedp.WithNewBrowserContext())
+func (p *BrowserPool) newTabContext(b *pooledBrowser, _ context.Context) (context.Context, func(), error) {
+	// Create a new tab (target) within the existing browser by using browserCtx
+	// as the parent. chromedp.NewContext opens a new blank tab in the same browser
+	// process. WithNewBrowserContext would create a separate browser profile and
+	// requires a different initialization path — avoid it here.
+	tabCtx, tabCancel := chromedp.NewContext(b.browserCtx)
 	release := func() {
 		tabCancel()
 		p.mu.Lock()
@@ -212,17 +216,20 @@ func (p *BrowserPool) newTabContext(b *pooledBrowser, allocCtx context.Context) 
 func (p *BrowserPool) createBrowser(ctx context.Context) (*pooledBrowser, error) {
 	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, p.opts...)
 
-	browserCtx, cancel := chromedp.NewContext(allocCtx)
+	// browserCtx is the root browser context; its cancel must NOT be called
+	// while the pool entry is alive — cancelling it would kill the browser.
+	// It is cancelled via allocCancel (which cancels the whole allocator tree)
+	// when the pooled browser is evicted or the pool is stopped.
+	browserCtx, _ := chromedp.NewContext(allocCtx)
 	if err := chromedp.Run(browserCtx); err != nil {
-		cancel()
 		allocCancel()
 		return nil, fmt.Errorf("warm up pooled browser: %w", err)
 	}
-	_ = cancel
 
 	return &pooledBrowser{
 		allocCtx:    allocCtx,
 		allocCancel: allocCancel,
+		browserCtx:  browserCtx,
 		lastUsed:    time.Now(),
 		maxTabs:     p.maxTabs,
 	}, nil

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,15 +17,38 @@ import (
 
 // chromeOpts returns headless Chrome allocator options suitable for CI.
 func chromeOpts() []chromedp.ExecAllocatorOption {
-	return append(chromedp.DefaultExecAllocatorOptions[:],
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-dev-shm-usage", true),
 	)
+	// On macOS, Chrome may not be on PATH; provide explicit binary path.
+	const macOSChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	if _, err := os.Stat(macOSChrome); err == nil {
+		opts = append(opts, chromedp.ExecPath(macOSChrome))
+	}
+	return opts
+}
+
+// requireChrome skips the test if no Chrome/Chromium binary is found on PATH.
+func requireChrome(t *testing.T) {
+	t.Helper()
+	candidates := []string{"google-chrome", "chromium", "chromium-browser", "google-chrome-stable"}
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c); err == nil {
+			return
+		}
+	}
+	// Also check macOS default install location.
+	if _, err := os.Stat("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"); err == nil {
+		return
+	}
+	t.Skip("Chrome not found; skipping integration test")
 }
 
 func TestBrowserPoolAcquireAndRelease(t *testing.T) {
+	requireChrome(t)
 	pool := NewBrowserPool(PoolConfig{Size: 2, MaxTabs: 5, AcquireTimeout: 30 * time.Second}, chromeOpts())
 	t.Cleanup(func() { pool.Stop() })
 
@@ -49,6 +74,7 @@ func TestBrowserPoolAcquireAndRelease(t *testing.T) {
 }
 
 func TestBrowserPoolAcquireMultipleTabs(t *testing.T) {
+	requireChrome(t)
 	pool := NewBrowserPool(PoolConfig{Size: 1, MaxTabs: 3, AcquireTimeout: 30 * time.Second}, chromeOpts())
 	t.Cleanup(func() { pool.Stop() })
 
@@ -72,6 +98,7 @@ func TestBrowserPoolAcquireMultipleTabs(t *testing.T) {
 }
 
 func TestBrowserPoolStoppedReturnsError(t *testing.T) {
+	requireChrome(t)
 	pool := NewBrowserPool(PoolConfig{Size: 1, MaxTabs: 1, AcquireTimeout: 5 * time.Second}, chromeOpts())
 	pool.Stop()
 
@@ -88,12 +115,14 @@ func TestBrowserPoolStoppedReturnsError(t *testing.T) {
 }
 
 func TestBrowserPoolStopIdempotentChrome(t *testing.T) {
+	requireChrome(t)
 	pool := NewBrowserPool(PoolConfig{Size: 1, MaxTabs: 1}, chromeOpts())
 	pool.Stop()
 	pool.Stop() // must not panic
 }
 
 func TestBrowserPoolEvictIdle(t *testing.T) {
+	requireChrome(t)
 	pool := NewBrowserPool(PoolConfig{Size: 2, MaxTabs: 1, IdleTimeout: 10 * time.Millisecond, AcquireTimeout: 30 * time.Second}, chromeOpts())
 	t.Cleanup(func() { pool.Stop() })
 
@@ -120,6 +149,7 @@ func TestBrowserPoolEvictIdle(t *testing.T) {
 }
 
 func TestRunnerRunTaskNavigate(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<html><head><title>Test Page</title></head><body><h1>Hello</h1></body></html>`))
@@ -159,6 +189,7 @@ func TestRunnerRunTaskNavigate(t *testing.T) {
 }
 
 func TestRunnerRunTaskExtractText(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<html><body><p id="msg">Hello World</p></body></html>`))
@@ -198,6 +229,7 @@ func TestRunnerRunTaskExtractText(t *testing.T) {
 }
 
 func TestRunnerRunTaskGetTitle(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<html><head><title>MyTitle</title></head><body></body></html>`))
@@ -237,6 +269,7 @@ func TestRunnerRunTaskGetTitle(t *testing.T) {
 }
 
 func TestRunnerRunTaskGetURL(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>page</body></html>`))
 	}))
@@ -273,6 +306,7 @@ func TestRunnerRunTaskGetURL(t *testing.T) {
 }
 
 func TestRunnerRunTaskWait(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body><div id="ready">OK</div></body></html>`))
 	}))
@@ -311,6 +345,7 @@ func TestRunnerRunTaskWait(t *testing.T) {
 }
 
 func TestRunnerRunTaskClickAndType(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>
 <input id="name" type="text">
@@ -355,6 +390,7 @@ func TestRunnerRunTaskClickAndType(t *testing.T) {
 }
 
 func TestRunnerRunTaskEvalAllowed(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body></body></html>`))
 	}))
@@ -394,6 +430,7 @@ func TestRunnerRunTaskEvalAllowed(t *testing.T) {
 }
 
 func TestRunnerRunTaskSetupProxyAuth(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>proxied</body></html>`))
 	}))
@@ -436,6 +473,7 @@ func TestRunnerRunTaskSetupProxyAuth(t *testing.T) {
 }
 
 func TestRunnerRunTaskLoopSteps(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body><p id="p">item</p></body></html>`))
 	}))
@@ -476,6 +514,7 @@ func TestRunnerRunTaskLoopSteps(t *testing.T) {
 }
 
 func TestRunnerRunTaskScrollAndScreenshot(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body style="height:2000px"><p id="top">top</p></body></html>`))
 	}))
@@ -509,12 +548,13 @@ func TestRunnerRunTaskScrollAndScreenshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
-	if result.ExtractedData["shot"] == "" {
-		t.Error("expected screenshot data")
+	if len(result.Screenshots) == 0 {
+		t.Error("expected at least one screenshot to be captured")
 	}
 }
 
 func TestRunnerRunTaskSelectAndCheck(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>
 <select id="sel"><option value="a">A</option><option value="b">B</option></select>
@@ -558,6 +598,7 @@ func TestRunnerRunTaskSelectAndCheck(t *testing.T) {
 }
 
 func TestRunnerRunTaskNoPool(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>ok</body></html>`))
 	}))
@@ -592,6 +633,7 @@ func TestRunnerRunTaskNoPool(t *testing.T) {
 }
 
 func TestRunnerRunTaskCookies(t *testing.T) {
+	requireChrome(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc123"})
 		_, _ = w.Write([]byte(`<html><body>cookies set</body></html>`))

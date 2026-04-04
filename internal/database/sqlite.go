@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -110,6 +111,9 @@ func newTursoDB(config DatabaseConfig) (*DB, error) {
 }
 
 func applySQLitePragmas(conns ...*sql.DB) {
+	// Some PRAGMAs (journal_mode, mmap_size, busy_timeout) return a result row
+	// on certain drivers (e.g. libsql). Use QueryRow().Scan to consume the row
+	// so the connection is not left in a bad state.
 	pragmas := []string{
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA journal_mode=WAL",
@@ -123,8 +127,12 @@ func applySQLitePragmas(conns ...*sql.DB) {
 			continue
 		}
 		for _, p := range pragmas {
-			if _, err := c.Exec(p); err != nil {
-				log.Printf("warn: %s: %v", p, err)
+			var result any
+			if err := c.QueryRow(p).Scan(&result); err != nil {
+				// QueryRow returns sql.ErrNoRows for write-only PRAGMAs — that's fine.
+				if !errors.Is(err, sql.ErrNoRows) {
+					log.Printf("warn: %s: %v", p, err)
+				}
 			}
 		}
 	}
