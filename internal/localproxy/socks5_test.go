@@ -3,8 +3,8 @@ package localproxy
 import (
 	"net"
 	"strings"
-	"time"
 	"testing"
+	"time"
 
 	"flowpilot/internal/models"
 )
@@ -213,7 +213,7 @@ func TestHandleSOCKS5ClientBasicFlow(t *testing.T) {
 		t.Fatalf("read connect response: %v", err)
 	}
 
-	_ = <-errCh
+	<-errCh
 }
 
 func TestDialViaUpstreamSOCKS5(t *testing.T) {
@@ -225,8 +225,8 @@ func TestDialViaUpstreamSOCKS5(t *testing.T) {
 	var conn net.Conn
 	go func() {
 		var err error
-		conn, err = dialViaUpstream("127.0.0.1", 
-			models.ProxyConfig{Server: "127.0.0.1:1080", Protocol: "socks5"}, 
+		conn, err = dialViaUpstream("127.0.0.1",
+			models.ProxyConfig{Server: "127.0.0.1:1080", Protocol: "socks5"},
 			"example.com:80")
 		errCh <- err
 	}()

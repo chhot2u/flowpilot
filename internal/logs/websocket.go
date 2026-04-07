@@ -58,13 +58,6 @@ func (w *WebSocketLogger) SetCallback(cb WSEventCallback) {
 	w.callback = cb
 }
 
-func (w *WebSocketLogger) append(log models.WebSocketLog) {
-	if len(w.logs) >= w.maxLogs {
-		return
-	}
-	w.logs = append(w.logs, log)
-}
-
 func (w *WebSocketLogger) appendAndNotify(log models.WebSocketLog) {
 	w.mu.Lock()
 	if len(w.logs) >= w.maxLogs {

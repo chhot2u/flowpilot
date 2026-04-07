@@ -49,7 +49,6 @@ var dangerousPatterns = []*regexp.Regexp{
 
 type debugController struct {
 	pauseCh  chan struct{} // closed when resuming
-	stepOnce chan struct{} // sends one signal for step
 	mu       sync.Mutex
 	paused   bool
 	pauseNew chan struct{}

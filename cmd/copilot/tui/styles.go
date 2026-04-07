@@ -9,10 +9,7 @@ var (
 	colorPrimary   = lipgloss.Color("#7C3AED") // purple
 	colorSecondary = lipgloss.Color("#06B6D4") // cyan
 	colorSuccess   = lipgloss.Color("#10B981") // green
-	colorWarning   = lipgloss.Color("#F59E0B") // amber
-	colorError     = lipgloss.Color("#EF4444") // red
 	colorMuted     = lipgloss.Color("#6B7280") // gray
-	colorBackground = lipgloss.Color("#1F2937") // dark gray
 )
 
 // Header styles
@@ -114,19 +111,6 @@ var (
 				Padding(0, 1)
 )
 
-// Model select styles
-var (
-	modelItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D1D5DB")).
-			Padding(0, 1)
-
-	modelSelectedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FFFFFF")).
-				Background(colorPrimary).
-				Bold(true).
-				Padding(0, 1)
-)
-
 // Help styles
 var (
 	helpBoxStyle = lipgloss.NewStyle().
@@ -136,25 +120,14 @@ var (
 			Background(lipgloss.Color("#111827"))
 
 	helpTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(colorPrimary).
-				MarginBottom(1)
+			Bold(true).
+			Foreground(colorPrimary).
+			MarginBottom(1)
 
 	helpContentStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#D1D5DB"))
 
 	helpHintStyle = lipgloss.NewStyle().
-				Foreground(colorMuted).
-				MarginTop(1)
-)
-
-// Error styles
-var (
-	errorStyle = lipgloss.NewStyle().
-			Foreground(colorError).
-			Bold(true)
-
-	successStyle = lipgloss.NewStyle().
-			Foreground(colorSuccess).
-			Bold(true)
+			Foreground(colorMuted).
+			MarginTop(1)
 )

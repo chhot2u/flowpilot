@@ -333,13 +333,11 @@ func (r *Runner) execEval(ctx context.Context, step models.TaskStep) error {
 	if err := validateEvalScript(step.Value); err != nil {
 		return fmt.Errorf("eval validation failed: %w", err)
 	}
-	evalCtx := ctx
-	cancel := func() {}
+	timeout := 5 * time.Second
 	if step.Timeout > 0 {
-		evalCtx, cancel = context.WithTimeout(ctx, time.Duration(step.Timeout)*time.Second)
-	} else {
-		evalCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		timeout = time.Duration(step.Timeout) * time.Second
 	}
+	evalCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var res any
 	return r.exec.Run(evalCtx,
@@ -1282,16 +1280,16 @@ func (r *Runner) execAntiBot(ctx context.Context, step models.TaskStep, result *
 		// Randomize screen resolution slightly
 		var randomWidth = window.screen.width + Math.floor(Math.random() * 10) - 5;
 		var randomHeight = window.screen.height + Math.floor(Math.random() * 10) - 5;
-		
+
 		// Override some properties
 		Object.defineProperty(navigator, 'userAgent', {
 			get: function() { return navigator.userAgent; },
 			configurable: true
 		});
-		
+
 		// Randomize timezone offset
 		var randomOffset = Math.floor(Math.random() * 2) - 1;
-		
+
 		return {
 			enabled: true,
 			fingerprintModified: true,
@@ -1342,10 +1340,10 @@ func (r *Runner) execHumanTyping(ctx context.Context, step models.TaskStep) erro
 		var el = document.querySelector(selector);
 		if (!el) return false;
 		el.focus();
-		
+
 		var delay = 50 + Math.random() * 100;
 		var index = 0;
-		
+
 		function typeNext() {
 			if (index >= text.length) {
 				el.dispatchEvent(new Event('change', {bubbles: true}));

@@ -117,7 +117,7 @@ func TestProcessSlashCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := InitialModel()
-			m, _ = m.ProcessSlashCommand(tt.input)
+			_, _ = m.ProcessSlashCommand(tt.input)
 			// Commands add system messages or change view mode
 		})
 	}

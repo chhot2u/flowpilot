@@ -295,7 +295,7 @@ func (q *Queue) Cancel(taskID string) error {
 		q.mu.Unlock()
 	}
 
-	dbCtx, cancel := q.dbWriteContext(nil)
+	dbCtx, cancel := q.dbWriteContext(context.TODO())
 	defer cancel()
 	if err := q.db.BatchApplyTaskStateChanges(dbCtx, []database.TaskStateChange{{TaskID: taskID, Status: models.TaskStatusCancelled, Error: "cancelled by user"}}); err != nil {
 		return fmt.Errorf("update task status to cancelled: %w", err)
@@ -372,7 +372,7 @@ func (q *Queue) enqueueTaskStateChanges(changes []database.TaskStateChange) erro
 	stopped := q.stopped
 	q.mu.Unlock()
 	if stopped {
-		dbCtx, cancel := q.dbWriteContext(nil)
+		dbCtx, cancel := q.dbWriteContext(context.TODO())
 		defer cancel()
 		return q.db.BatchApplyTaskStateChanges(dbCtx, changes)
 	}
@@ -381,7 +381,7 @@ func (q *Queue) enqueueTaskStateChanges(changes []database.TaskStateChange) erro
 		select {
 		case q.persistenceCh <- taskStateWrite{change: change}:
 		default:
-			dbCtx, cancel := q.dbWriteContext(nil)
+			dbCtx, cancel := q.dbWriteContext(context.TODO())
 			err := q.db.BatchApplyTaskStateChanges(dbCtx, []database.TaskStateChange{change})
 			cancel()
 			if err != nil {
@@ -405,7 +405,7 @@ func (q *Queue) persistenceWorker() {
 		}
 		pending := append([]database.TaskStateChange(nil), batch...)
 		batch = batch[:0]
-		dbCtx, cancel := q.dbWriteContext(nil)
+		dbCtx, cancel := q.dbWriteContext(context.TODO())
 		err := q.db.BatchApplyTaskStateChanges(dbCtx, pending)
 		cancel()
 		if err != nil {

@@ -572,7 +572,7 @@ func TestCreateTaskWithNilStepsAndTags(t *testing.T) {
 		t.Fatalf("GetTask: %v", err)
 	}
 	// nil steps serializes as "null", which Unmarshal treats as nil slice
-	if got.Steps != nil && len(got.Steps) != 0 {
+	if len(got.Steps) != 0 {
 		t.Errorf("Steps: got %v, want nil or empty", got.Steps)
 	}
 }
@@ -1254,7 +1254,7 @@ func TestListTasksByBatchEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasksByBatch: %v", err)
 	}
-	if tasks != nil && len(tasks) != 0 {
+	if len(tasks) != 0 {
 		t.Errorf("expected no tasks, got %d", len(tasks))
 	}
 }
@@ -1759,7 +1759,7 @@ func TestCreateRecordedFlowEmptySteps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRecordedFlow: %v", err)
 	}
-	if got.Steps != nil && len(got.Steps) != 0 {
+	if len(got.Steps) != 0 {
 		t.Errorf("Steps should be nil or empty, got %v", got.Steps)
 	}
 }
@@ -1916,7 +1916,7 @@ func TestListTasksEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	if tasks != nil && len(tasks) != 0 {
+	if len(tasks) != 0 {
 		t.Errorf("expected no tasks, got %d", len(tasks))
 	}
 }
@@ -4135,7 +4135,7 @@ func TestFinalizeTaskSuccessWithDataDB(t *testing.T) {
 	_ = db.CreateTask(ctx, task)
 	_ = db.UpdateTaskStatus(ctx, "t1", models.TaskStatusRunning, "")
 	result := models.TaskResult{
-		Duration: time.Second,
+		Duration:      time.Second,
 		Logs:          []models.LogEntry{{Level: "info", Message: "done"}},
 		ExtractedData: map[string]string{"key": "value"},
 	}

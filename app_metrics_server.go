@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -78,11 +77,4 @@ func normalizeMetricsAddr(addr string) string {
 		return defaultMetricsAddr()
 	}
 	return addr
-}
-
-func formatMetricsURL(addr string) string {
-	if addr == "" {
-		return ""
-	}
-	return fmt.Sprintf("http://%s/metrics", addr)
 }

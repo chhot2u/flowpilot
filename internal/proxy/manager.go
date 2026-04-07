@@ -196,7 +196,7 @@ func (m *Manager) SelectProxyWithFallback(ctx context.Context, geo string, fallb
 
 // RecordUsage records whether a proxy was used successfully.
 func (m *Manager) RecordUsage(proxyID string, success bool) error {
-	dbCtx, cancel := m.dbWriteContext(nil)
+	dbCtx, cancel := m.dbWriteContext(context.TODO())
 	defer cancel()
 	return m.db.IncrementProxyUsage(dbCtx, proxyID, success)
 }

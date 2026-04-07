@@ -1125,30 +1125,17 @@ func setupTestAppWithProxyManager(t *testing.T) *App {
 	return app
 }
 
-// Helper: setup app with log exporter
-func setupTestAppWithLogExporter(t *testing.T) *App {
-	t.Helper()
-	app := setupTestApp(t)
-	logsDir := filepath.Join(t.TempDir(), "logs")
-	le, err := logs.NewExporter(app.db, logsDir)
-	if err != nil {
-		t.Fatalf("NewExporter: %v", err)
-	}
-	app.logExporter = le
-	return app
-}
-
 // app_batch.go tests
 func TestAppGetBatchProgress(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	// Should fail if not ready
 	badApp := &App{initErr: errors.New("test")}
 	_, err := badApp.GetBatchProgress("any")
 	if err == nil {
 		t.Error("expected error when app not ready")
 	}
-	
+
 	// Valid case with empty batch
 	progress, err := app.GetBatchProgress("nonexistent")
 	if err != nil {
@@ -1161,7 +1148,7 @@ func TestAppGetBatchProgress(t *testing.T) {
 
 func TestAppListBatchGroups(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	groups, err := app.ListBatchGroups()
 	if err != nil {
 		t.Fatalf("ListBatchGroups: %v", err)
@@ -1176,7 +1163,7 @@ func TestAppListBatchGroups(t *testing.T) {
 
 func TestAppListTasksByBatch(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	tasks, err := app.ListTasksByBatch("nonexistent")
 	if err != nil {
 		t.Fatalf("ListTasksByBatch: %v", err)
@@ -1188,7 +1175,7 @@ func TestAppListTasksByBatch(t *testing.T) {
 
 func TestAppRetryFailedBatchEmpty(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	// Empty batch ID should error
 	_, err := app.RetryFailedBatch("")
 	if err == nil {
@@ -1198,7 +1185,7 @@ func TestAppRetryFailedBatchEmpty(t *testing.T) {
 
 func TestAppRetryFailedBatchNotFound(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	failed, err := app.RetryFailedBatch("nonexistent")
 	if err != nil {
 		t.Fatalf("RetryFailedBatch: %v", err)
@@ -1210,7 +1197,7 @@ func TestAppRetryFailedBatchNotFound(t *testing.T) {
 
 func TestAppPauseBatchEmptyID(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	err := app.PauseBatch("")
 	if err == nil {
 		t.Error("expected error for empty batchID")
@@ -1219,7 +1206,7 @@ func TestAppPauseBatchEmptyID(t *testing.T) {
 
 func TestAppPauseBatchValid(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	err := app.PauseBatch("test-batch-123")
 	if err != nil {
 		t.Fatalf("PauseBatch: %v", err)
@@ -1228,7 +1215,7 @@ func TestAppPauseBatchValid(t *testing.T) {
 
 func TestAppResumeBatchEmptyID(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	err := app.ResumeBatch("")
 	if err == nil {
 		t.Error("expected error for empty batchID")
@@ -1237,7 +1224,7 @@ func TestAppResumeBatchEmptyID(t *testing.T) {
 
 func TestAppResumeBatchValid(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	err := app.ResumeBatch("test-batch-456")
 	if err != nil {
 		t.Fatalf("ResumeBatch: %v", err)
@@ -1249,7 +1236,7 @@ func TestAppSaveCaptchaConfigValid(t *testing.T) {
 	app := setupTestApp(t)
 	// Create a mock runner so refreshCaptchaSolver doesn't panic
 	app.runner = &browser.Runner{}
-	
+
 	cfg, err := app.SaveCaptchaConfig("2captcha", "test-api-key-123")
 	if err != nil {
 		t.Fatalf("SaveCaptchaConfig: %v", err)
@@ -1265,7 +1252,7 @@ func TestAppSaveCaptchaConfigValid(t *testing.T) {
 func TestAppSaveCaptchaConfigEmptyProvider(t *testing.T) {
 	app := setupTestApp(t)
 	app.runner = &browser.Runner{}
-	
+
 	_, err := app.SaveCaptchaConfig("", "key")
 	if err == nil {
 		t.Error("expected error for empty provider")
@@ -1275,7 +1262,7 @@ func TestAppSaveCaptchaConfigEmptyProvider(t *testing.T) {
 func TestAppSaveCaptchaConfigEmptyKey(t *testing.T) {
 	app := setupTestApp(t)
 	app.runner = &browser.Runner{}
-	
+
 	_, err := app.SaveCaptchaConfig("2captcha", "")
 	if err == nil {
 		t.Error("expected error for empty apiKey")
@@ -1285,7 +1272,7 @@ func TestAppSaveCaptchaConfigEmptyKey(t *testing.T) {
 func TestAppSaveCaptchaConfigInvalidProvider(t *testing.T) {
 	app := setupTestApp(t)
 	app.runner = &browser.Runner{}
-	
+
 	_, err := app.SaveCaptchaConfig("invalid-provider", "key")
 	if err == nil {
 		t.Error("expected error for invalid provider")
@@ -1294,7 +1281,7 @@ func TestAppSaveCaptchaConfigInvalidProvider(t *testing.T) {
 
 func TestAppGetCaptchaConfigNotFound(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	cfg, err := app.GetCaptchaConfig()
 	if err != nil {
 		t.Fatalf("GetCaptchaConfig: %v", err)
@@ -1306,7 +1293,7 @@ func TestAppGetCaptchaConfigNotFound(t *testing.T) {
 
 func TestAppListCaptchaConfigs(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	configs, err := app.ListCaptchaConfigs()
 	if err != nil {
 		t.Fatalf("ListCaptchaConfigs: %v", err)
@@ -1319,7 +1306,7 @@ func TestAppListCaptchaConfigs(t *testing.T) {
 func TestAppDeleteCaptchaConfigEmptyID(t *testing.T) {
 	app := setupTestApp(t)
 	app.runner = &browser.Runner{}
-	
+
 	err := app.DeleteCaptchaConfig("")
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1328,7 +1315,7 @@ func TestAppDeleteCaptchaConfigEmptyID(t *testing.T) {
 
 func TestAppTestCaptchaConfigEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.TestCaptchaConfig("")
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1338,7 +1325,7 @@ func TestAppTestCaptchaConfigEmptyID(t *testing.T) {
 // app_compliance.go tests
 func TestAppParseBatchURLsListFormat(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	input := "https://example.com\nhttps://example.org"
 	urls, err := app.ParseBatchURLs(input, false)
 	if err != nil {
@@ -1351,7 +1338,7 @@ func TestAppParseBatchURLsListFormat(t *testing.T) {
 
 func TestAppParseBatchURLsCSVFormat(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	input := "URL\nhttps://example.com\nhttps://example.org\n"
 	urls, err := app.ParseBatchURLs(input, true)
 	if err != nil {
@@ -1364,7 +1351,7 @@ func TestAppParseBatchURLsCSVFormat(t *testing.T) {
 
 func TestAppParseBatchURLsEmptyInput(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	input := ""
 	urls, err := app.ParseBatchURLs(input, false)
 	if err != nil {
@@ -1378,7 +1365,7 @@ func TestAppParseBatchURLsEmptyInput(t *testing.T) {
 // app_export.go tests
 func TestAppExportTaskLogsNoExporter(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ExportTaskLogs("task-123")
 	if err == nil {
 		t.Error("expected error when logExporter is nil")
@@ -1387,7 +1374,7 @@ func TestAppExportTaskLogsNoExporter(t *testing.T) {
 
 func TestAppExportBatchLogsNoExporter(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ExportBatchLogs("batch-123")
 	if err == nil {
 		t.Error("expected error when logExporter is nil")
@@ -1396,7 +1383,7 @@ func TestAppExportBatchLogsNoExporter(t *testing.T) {
 
 func TestAppListWebSocketLogsEmptyFlowID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ListWebSocketLogs("")
 	if err == nil {
 		t.Error("expected error for empty flowID")
@@ -1405,7 +1392,7 @@ func TestAppListWebSocketLogsEmptyFlowID(t *testing.T) {
 
 func TestAppListWebSocketLogsValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	logs, err := app.ListWebSocketLogs("flow-123")
 	if err != nil {
 		t.Fatalf("ListWebSocketLogs: %v", err)
@@ -1417,7 +1404,7 @@ func TestAppListWebSocketLogsValid(t *testing.T) {
 
 func TestAppListTaskEventsEmptyTaskID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ListTaskEvents("")
 	if err == nil {
 		t.Error("expected error for empty taskID")
@@ -1426,7 +1413,7 @@ func TestAppListTaskEventsEmptyTaskID(t *testing.T) {
 
 func TestAppListTaskEventsValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	events, err := app.ListTaskEvents("task-123")
 	if err != nil {
 		t.Fatalf("ListTaskEvents: %v", err)
@@ -1442,7 +1429,7 @@ func TestAppValidateStepActions(t *testing.T) {
 		{Action: models.ActionNavigate, Value: "https://example.com"},
 		{Action: models.ActionClick, Value: "#button"},
 	}
-	
+
 	err := validateStepActions(steps)
 	if err != nil {
 		t.Fatalf("validateStepActions: %v", err)
@@ -1453,7 +1440,7 @@ func TestAppValidateStepActionsInvalid(t *testing.T) {
 	steps := []models.TaskStep{
 		{Action: "invalid_action", Value: "test"},
 	}
-	
+
 	err := validateStepActions(steps)
 	if err == nil {
 		t.Error("expected error for invalid action")
@@ -1465,7 +1452,7 @@ func TestAppCollectUnknownStepActionWarnings(t *testing.T) {
 		{Action: models.ActionNavigate, Value: "test"},
 		{Action: "unknown_action", Value: "test"},
 	}
-	
+
 	warnings := collectUnknownStepActionWarnings(steps, 1)
 	if len(warnings) != 1 {
 		t.Errorf("expected 1 warning, got %d", len(warnings))
@@ -1474,7 +1461,7 @@ func TestAppCollectUnknownStepActionWarnings(t *testing.T) {
 
 func TestAppExportTaskNotFound(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ExportTask("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent task")
@@ -1483,7 +1470,7 @@ func TestAppExportTaskNotFound(t *testing.T) {
 
 func TestAppImportTaskInvalidPath(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ImportTask("/nonexistent/path.json")
 	if err == nil {
 		t.Error("expected error for invalid path")
@@ -1492,7 +1479,7 @@ func TestAppImportTaskInvalidPath(t *testing.T) {
 
 func TestAppExportFlowNotFound(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ExportFlow("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent flow")
@@ -1501,7 +1488,7 @@ func TestAppExportFlowNotFound(t *testing.T) {
 
 func TestAppImportFlowInvalidPath(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ImportFlow("/nonexistent/path.json")
 	if err == nil {
 		t.Error("expected error for invalid path")
@@ -1511,13 +1498,13 @@ func TestAppImportFlowInvalidPath(t *testing.T) {
 // app_flows.go tests
 func TestAppSaveDOMSnapshot(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	snapshot := models.DOMSnapshot{
 		FlowID:    "flow-123",
 		StepIndex: 0,
 		HTML:      "<html></html>",
 	}
-	
+
 	err := app.SaveDOMSnapshot(snapshot)
 	if err != nil {
 		t.Fatalf("SaveDOMSnapshot: %v", err)
@@ -1526,7 +1513,7 @@ func TestAppSaveDOMSnapshot(t *testing.T) {
 
 func TestAppListDOMSnapshotsValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	snapshots, err := app.ListDOMSnapshots("flow-123")
 	if err != nil {
 		t.Fatalf("ListDOMSnapshots: %v", err)
@@ -1538,7 +1525,7 @@ func TestAppListDOMSnapshotsValid(t *testing.T) {
 
 func TestAppUpdateRecordedFlowEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	flow := models.RecordedFlow{ID: ""}
 	err := app.UpdateRecordedFlow(flow)
 	if err == nil {
@@ -1548,18 +1535,18 @@ func TestAppUpdateRecordedFlowEmptyID(t *testing.T) {
 
 func TestAppUpdateRecordedFlowValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	steps := []models.RecordedStep{
 		{Index: 0, Action: models.ActionNavigate, Value: "https://example.com"},
 	}
 	flow, _ := app.CreateRecordedFlow("Original", "", "https://example.com", steps)
-	
+
 	flow.Name = "Updated"
 	err := app.UpdateRecordedFlow(*flow)
 	if err != nil {
 		t.Fatalf("UpdateRecordedFlow: %v", err)
 	}
-	
+
 	updated, _ := app.GetRecordedFlow(flow.ID)
 	if updated.Name != "Updated" {
 		t.Errorf("expected name Updated, got %s", updated.Name)
@@ -1569,7 +1556,7 @@ func TestAppUpdateRecordedFlowValid(t *testing.T) {
 // app_proxy.go tests
 func TestAppListProxyCountryStatsNoManager(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.ListProxyCountryStats()
 	if err == nil {
 		t.Error("expected error when proxyManager is nil")
@@ -1578,7 +1565,7 @@ func TestAppListProxyCountryStatsNoManager(t *testing.T) {
 
 func TestAppListProxyCountryStatsValid(t *testing.T) {
 	app := setupTestAppWithProxyManager(t)
-	
+
 	stats, err := app.ListProxyCountryStats()
 	if err != nil {
 		t.Fatalf("ListProxyCountryStats: %v", err)
@@ -1593,7 +1580,7 @@ func TestAppListProxyCountryStatsValid(t *testing.T) {
 
 func TestAppCreateProxyRoutingPresetNoName(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.CreateProxyRoutingPreset("", "US", "strict", false)
 	if err == nil {
 		t.Error("expected error for empty name")
@@ -1602,7 +1589,7 @@ func TestAppCreateProxyRoutingPresetNoName(t *testing.T) {
 
 func TestAppCreateProxyRoutingPresetValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	preset, err := app.CreateProxyRoutingPreset("My Preset", "US", "strict", false)
 	if err != nil {
 		t.Fatalf("CreateProxyRoutingPreset: %v", err)
@@ -1617,7 +1604,7 @@ func TestAppCreateProxyRoutingPresetValid(t *testing.T) {
 
 func TestAppCreateProxyRoutingPresetRandomNoCountry(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.CreateProxyRoutingPreset("Random", "", "", true)
 	if err == nil {
 		t.Error("expected error for random without country")
@@ -1626,7 +1613,7 @@ func TestAppCreateProxyRoutingPresetRandomNoCountry(t *testing.T) {
 
 func TestAppListProxyRoutingPresetsValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	presets, err := app.ListProxyRoutingPresets()
 	if err != nil {
 		t.Fatalf("ListProxyRoutingPresets: %v", err)
@@ -1638,7 +1625,7 @@ func TestAppListProxyRoutingPresetsValid(t *testing.T) {
 
 func TestAppDeleteProxyRoutingPresetEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	err := app.DeleteProxyRoutingPreset("")
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1647,7 +1634,7 @@ func TestAppDeleteProxyRoutingPresetEmptyID(t *testing.T) {
 
 func TestAppDeleteProxyRoutingPresetValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	preset, _ := app.CreateProxyRoutingPreset("To Delete", "US", "strict", false)
 	err := app.DeleteProxyRoutingPreset(preset.ID)
 	if err != nil {
@@ -1657,7 +1644,7 @@ func TestAppDeleteProxyRoutingPresetValid(t *testing.T) {
 
 func TestAppGetLocalProxyGatewayStatsNoManager(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.GetLocalProxyGatewayStats()
 	if err == nil {
 		t.Error("expected error when localProxyManager is nil")
@@ -1666,7 +1653,7 @@ func TestAppGetLocalProxyGatewayStatsNoManager(t *testing.T) {
 
 func TestAppAddProxyWithRateLimitNegative(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.AddProxyWithRateLimit("proxy.example.com:8080", "http", "user", "pass", "", -1)
 	if err == nil {
 		t.Error("expected error for negative rate limit")
@@ -1675,7 +1662,7 @@ func TestAppAddProxyWithRateLimitNegative(t *testing.T) {
 
 func TestAppAddProxyWithRateLimitValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	p, err := app.AddProxyWithRateLimit("proxy.example.com:8080", "http", "user", "pass", "US", 100)
 	if err != nil {
 		t.Fatalf("AddProxyWithRateLimit: %v", err)
@@ -1688,7 +1675,7 @@ func TestAppAddProxyWithRateLimitValid(t *testing.T) {
 // app_schedules.go tests
 func TestAppGetScheduleEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	_, err := app.GetSchedule("")
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1697,7 +1684,7 @@ func TestAppGetScheduleEmptyID(t *testing.T) {
 
 func TestAppGetScheduleNotFound(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	sched, err := app.GetSchedule("nonexistent")
 	// GetSchedule may return an error or nil schedule depending on DB behavior
 	if err == nil && sched != nil {
@@ -1707,7 +1694,7 @@ func TestAppGetScheduleNotFound(t *testing.T) {
 
 func TestAppListSchedulesValid(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	schedules, err := app.ListSchedules()
 	if err != nil {
 		t.Fatalf("ListSchedules: %v", err)
@@ -1719,7 +1706,7 @@ func TestAppListSchedulesValid(t *testing.T) {
 
 func TestAppDeleteScheduleEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	err := app.DeleteSchedule("")
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1728,7 +1715,7 @@ func TestAppDeleteScheduleEmptyID(t *testing.T) {
 
 func TestAppToggleScheduleEmptyID(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	err := app.ToggleSchedule("", true)
 	if err == nil {
 		t.Error("expected error for empty id")
@@ -1738,7 +1725,7 @@ func TestAppToggleScheduleEmptyID(t *testing.T) {
 // app.go tests
 func TestAppDefaultConfig(t *testing.T) {
 	cfg := DefaultAppConfig()
-	
+
 	if cfg.QueueConcurrency == 0 {
 		t.Error("expected QueueConcurrency > 0")
 	}
@@ -1750,7 +1737,7 @@ func TestAppDefaultConfig(t *testing.T) {
 func TestAppLoadConfigFromDiskNoPath(t *testing.T) {
 	app := setupTestApp(t)
 	app.configPath = ""
-	
+
 	err := app.loadConfigFromDisk()
 	if err != nil {
 		t.Fatalf("loadConfigFromDisk with no path: %v", err)
@@ -1760,7 +1747,7 @@ func TestAppLoadConfigFromDiskNoPath(t *testing.T) {
 func TestAppLoadConfigFromDiskFileNotFound(t *testing.T) {
 	app := setupTestApp(t)
 	app.configPath = filepath.Join(t.TempDir(), "nonexistent.json")
-	
+
 	err := app.loadConfigFromDisk()
 	if err != nil {
 		t.Fatalf("loadConfigFromDisk with missing file: %v", err)
@@ -1771,12 +1758,12 @@ func TestAppLoadConfigFromDiskValidJSON(t *testing.T) {
 	app := setupTestApp(t)
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
-	
+
 	configData := `{"QueueConcurrency": 5, "RetentionDays": 30}`
 	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	
+
 	app.configPath = configPath
 	err := app.loadConfigFromDisk()
 	if err != nil {
@@ -1791,11 +1778,11 @@ func TestAppLoadConfigFromDiskInvalidJSON(t *testing.T) {
 	app := setupTestApp(t)
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
-	
+
 	if err := os.WriteFile(configPath, []byte("invalid json {"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	
+
 	app.configPath = configPath
 	err := app.loadConfigFromDisk()
 	if err == nil {
@@ -1806,7 +1793,7 @@ func TestAppLoadConfigFromDiskInvalidJSON(t *testing.T) {
 func TestAppCheckAndReloadConfigNoPath(t *testing.T) {
 	app := setupTestApp(t)
 	app.configPath = ""
-	
+
 	app.checkAndReloadConfig(context.Background())
 	// Should not panic or error
 }
@@ -1814,7 +1801,7 @@ func TestAppCheckAndReloadConfigNoPath(t *testing.T) {
 func TestAppCheckAndReloadConfigFileNotFound(t *testing.T) {
 	app := setupTestApp(t)
 	app.configPath = "/nonexistent/path/config.json"
-	
+
 	app.checkAndReloadConfig(context.Background())
 	// Should not panic or error
 }
@@ -1823,21 +1810,21 @@ func TestAppCheckAndReloadConfigValidJSON(t *testing.T) {
 	app := setupTestApp(t)
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
-	
+
 	configData := `{"ProxyConcurrency": 10}`
 	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	
+
 	app.configPath = configPath
 	app.configModTime = time.Time{} // Zero time, so reload will happen
-	
+
 	app.checkAndReloadConfig(context.Background())
-	
+
 	app.configMu.Lock()
 	concurrency := app.config.ProxyConcurrency
 	app.configMu.Unlock()
-	
+
 	if concurrency != 10 {
 		t.Errorf("expected ProxyConcurrency 10, got %d", concurrency)
 	}
@@ -1845,21 +1832,21 @@ func TestAppCheckAndReloadConfigValidJSON(t *testing.T) {
 
 func TestAppPurgeOnceNoDatabase(t *testing.T) {
 	app := &App{db: nil, ctx: context.Background()}
-	
+
 	app.purgeOnce()
 	// Should not panic
 }
 
 func TestAppPurgeOnceWithDatabase(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	app.purgeOnce()
 	// Should not panic and should work
 }
 
 func TestAppGetTaskMetricsNoQueue(t *testing.T) {
 	app := setupTestApp(t)
-	
+
 	metrics := app.getTaskMetrics()
 	if metrics.Completed != 0 || metrics.Failed != 0 {
 		t.Errorf("expected zero metrics, got completed=%d failed=%d", metrics.Completed, metrics.Failed)
@@ -1868,13 +1855,12 @@ func TestAppGetTaskMetricsNoQueue(t *testing.T) {
 
 func TestAppGetTaskMetricsWithQueue(t *testing.T) {
 	app := setupTestAppWithQueue(t)
-	
+
 	metrics := app.getTaskMetrics()
 	if metrics.Completed < 0 || metrics.Failed < 0 {
 		t.Errorf("metrics should be non-negative: completed=%d failed=%d", metrics.Completed, metrics.Failed)
 	}
 }
-
 
 func TestAppCreateSchedule(t *testing.T) {
 	app := setupTestApp(t)
