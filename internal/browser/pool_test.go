@@ -96,7 +96,7 @@ func TestBrowserPoolAcquireAfterStop(t *testing.T) {
 	p := NewBrowserPool(PoolConfig{Size: 1}, opts)
 	p.Stop()
 
-	_, _, err := p.Acquire(nil)
+	_, _, err := p.Acquire(context.TODO())
 	if err == nil {
 		t.Fatal("expected error acquiring from stopped pool")
 	}
